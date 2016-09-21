@@ -1,0 +1,6 @@
+.ipynb*
+.*
+*.tar.gz
+*.pickle
+notMNIST*
+*.mat
