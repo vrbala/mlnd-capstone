@@ -24,20 +24,21 @@ with open(pickle_file, 'rb') as f:
 # parameters
 IMAGE_SIZE = 32
 NUM_LABELS = 10
-BATCH_SIZE = 64
+BATCH_SIZE = 16
 N_HIDDEN_1 = 256
-N_HIDDEN_2 = 128
-LEARNING_RATE = 0.3
-LAMBDA = 0.00001 # regularization rate
-NUM_STEPS = 10000
+LEARNING_RATE = 0.001
+LAMBDA = 0.0001 # regularization rate
+NUM_STEPS = 20000
+NUM_CHANNELS = 3
 
 def reformat(dataset, labels):
-    dataset = dataset.mean(axis=1) # convert to grayscale
-    dataset = dataset.reshape((-1, IMAGE_SIZE * IMAGE_SIZE)).astype(np.float32)
+    # dataset = dataset.mean(axis=1) # convert to grayscale
+    dataset = dataset.reshape((-1, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS)).astype(np.float32)
     # Map 0 to [1.0, 0.0, 0.0 ...], 1 to [0.0, 1.0, 0.0 ...]
     labels = (np.arange(1,11) == labels[:,None]).astype(np.float32)
     return dataset, labels
 
+print("After (optional) reformatting ... ")
 train_dataset, train_labels = reformat(train_dataset, train_labels)
 valid_dataset, valid_labels = reformat(valid_dataset, valid_labels)
 test_dataset, test_labels = reformat(test_dataset, test_labels)
@@ -49,6 +50,7 @@ test_dataset, test_labels = reformat(test_dataset, test_labels)
 # train_dataset = train_dataset[:50, :]
 # train_labels = train_labels[:50]
 # BATCH_SIZE = 10
+# NUM_STEPS = 2000
 
 print('Training set', train_dataset.shape, train_labels.shape)
 print('Validation set', valid_dataset.shape, valid_labels.shape)
@@ -57,21 +59,39 @@ print('Test set', test_dataset.shape, test_labels.shape)
 # global tf computation graph
 graph = tf.Graph()
 
-def setup_nn(X, weights, biases):
+def setup_conv_net(X, weights, biases, train=False):
 
-    # hidden layers with ReLU units
-    wh1 = weights['h1']
-    b1 = biases['b1']
-    hl1 = tf.nn.relu(tf.matmul(X, wh1) + b1)
+    # convolution layers with ReLU activations and max pooling
+    conv = tf.nn.conv2d(X,
+                        weights['conv1'],
+                        strides=[1, 1, 1, 1],
+                        padding='SAME')
+    relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv1']))
+    pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+    print("Pool1 shape: " + str(pool.get_shape().as_list()))
 
-    wh2 = weights['h2']
-    b2 = biases['b2']
-    hl2 = tf.nn.relu(tf.matmul(hl1, wh2) + b2)
+    conv = tf.nn.conv2d(pool,
+                        weights['conv2'],
+                        strides=[1, 1, 1, 1],
+                        padding='SAME')
+    relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv2']))
+    pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+    print("Pool2 shape: " + str(pool.get_shape().as_list()))
 
-    # Training computation.
-    w = weights['out']
-    b = biases['out']
-    logits = tf.matmul(hl1, w) + b # TODO: FIXME
+    # introduce a dropout with probability 0.5 only for training
+    # to avoid overfitting.
+    if train:
+        pool = tf.nn.dropout(pool, 0.5)
+
+    # reshape the resulting cuboid to feed to the
+    # downstream fully connected layers
+    shape = pool.get_shape().as_list()
+    reshape = tf.reshape(pool,
+                         [shape[0], shape[1] * shape[2] * shape[3]])
+    print("final pool shape: {}".format(shape))
+    hidden = tf.nn.relu(tf.matmul(reshape, weights['fc1']) + biases['fc1'])
+
+    logits = tf.matmul(hidden, weights['out']) + biases['out']
 
     return logits
 
@@ -80,50 +100,47 @@ with graph.as_default():
     # Input data. For the training data, we use a placeholder that will be fed
     # at run time with a training minibatch.
     tf_train_dataset = tf.placeholder(tf.float32,
-                                      shape=(BATCH_SIZE, IMAGE_SIZE * IMAGE_SIZE))
+                                      shape=(BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS))
     tf_train_labels = tf.placeholder(tf.float32, shape=(BATCH_SIZE, NUM_LABELS))
     tf_valid_dataset = tf.constant(valid_dataset)
     tf_test_dataset = tf.constant(test_dataset)
 
     # Store layers weight & bias
     weights = {
-        'h1': tf.Variable(tf.truncated_normal([IMAGE_SIZE*IMAGE_SIZE, N_HIDDEN_1])),
-        'h2': tf.Variable(tf.truncated_normal([N_HIDDEN_1, N_HIDDEN_2])),
-        'out': tf.Variable(tf.truncated_normal([N_HIDDEN_1, NUM_LABELS])) # TODO: FIXME
+        'conv1': tf.Variable(tf.truncated_normal([5, 5, NUM_CHANNELS, 16])), # 5x5 kernel, depth 16
+        'conv2': tf.Variable(tf.truncated_normal([5, 5, 16, 32])), # 5x5 kernel, depth 32
+        # after 2 max pooling operations, the feature maps will have 1/(2*2) of the original spatial dimensions
+        'fc1': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 32, N_HIDDEN_1])),
+        'out': tf.Variable(tf.truncated_normal([N_HIDDEN_1, NUM_LABELS]))
         }
+
     biases = {
-        'b1': tf.Variable(tf.truncated_normal([N_HIDDEN_1])),
-        'b2': tf.Variable(tf.truncated_normal([N_HIDDEN_2])),
+        'conv1': tf.Variable(tf.zeros([16])),
+        'conv2': tf.Variable(tf.zeros([32])),
+        'fc1': tf.Variable(tf.truncated_normal([N_HIDDEN_1])),
         'out': tf.Variable(tf.truncated_normal([NUM_LABELS]))
         }
 
-    logits = setup_nn(tf_train_dataset, weights, biases)
+    logits = setup_conv_net(tf_train_dataset, weights, biases, train=True)
     loss = tf.reduce_mean(
         tf.nn.softmax_cross_entropy_with_logits(logits, tf_train_labels)
-        + LAMBDA * tf.nn.l2_loss(weights['h1'])
-    #            + LAMBDA * tf.nn.l2_loss(weights['h2']) # TODO: FIXME
+        + LAMBDA * tf.nn.l2_loss(weights['conv1'])
+        + LAMBDA * tf.nn.l2_loss(weights['conv2'])
+        + LAMBDA * tf.nn.l2_loss(weights['fc1'])
         + LAMBDA * tf.nn.l2_loss(weights['out'])
-        + LAMBDA * tf.nn.l2_loss(biases['b1'])
-    #       + LAMBDA * tf.nn.l2_loss(biases['b2'])
+        + LAMBDA * tf.nn.l2_loss(biases['conv1'])
+        + LAMBDA * tf.nn.l2_loss(biases['conv2'])
+        + LAMBDA * tf.nn.l2_loss(biases['fc1'])
         + LAMBDA * tf.nn.l2_loss(biases['out']))
 
-    batch = tf.Variable(0.0)
-    # Decay once per epoch, using an exponential schedule starting at 0.01.
-    learning_rate = tf.train.exponential_decay(
-        LEARNING_RATE,                # Base learning rate.
-        batch * BATCH_SIZE,  # Current index into the dataset.
-        train_dataset.shape[0],          # Decay step.
-        0.95,                # Decay rate.
-        staircase=True)
-
     # Optimizer.
-    optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss)
+    optimizer = tf.train.GradientDescentOptimizer(LEARNING_RATE).minimize(loss)
 
     # Predictions for the training, validation, and test data.
     train_prediction = tf.nn.softmax(logits)
-    valid_logits = setup_nn(tf_valid_dataset, weights, biases)
+    valid_logits = setup_conv_net(tf_valid_dataset, weights, biases)
     valid_prediction = tf.nn.softmax(valid_logits)
-    test_logits = setup_nn(tf_test_dataset, weights, biases)
+    test_logits = setup_conv_net(tf_test_dataset, weights, biases)
     test_prediction = tf.nn.softmax(test_logits)
 
 
