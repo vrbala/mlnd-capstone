@@ -24,15 +24,15 @@ with open(pickle_file, 'rb') as f:
 # parameters
 IMAGE_SIZE = 32
 NUM_LABELS = 10
-BATCH_SIZE = 16
-N_HIDDEN_1 = 256
+BATCH_SIZE = 64
+N_HIDDEN_1 = 128
 LEARNING_RATE = 0.001
-LAMBDA = 0.0001 # regularization rate
-NUM_STEPS = 20000
-NUM_CHANNELS = 3
+LAMBDA = 0.00001 # regularization rate
+NUM_STEPS = 50000
+NUM_CHANNELS = 1
 
 def reformat(dataset, labels):
-    # dataset = dataset.mean(axis=1) # convert to grayscale
+    dataset = dataset.mean(axis=1) # convert to grayscale
     dataset = dataset.reshape((-1, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS)).astype(np.float32)
     # Map 0 to [1.0, 0.0, 0.0 ...], 1 to [0.0, 1.0, 0.0 ...]
     labels = (np.arange(1,11) == labels[:,None]).astype(np.float32)
@@ -43,14 +43,30 @@ train_dataset, train_labels = reformat(train_dataset, train_labels)
 valid_dataset, valid_labels = reformat(valid_dataset, valid_labels)
 test_dataset, test_labels = reformat(test_dataset, test_labels)
 
+# ***SEEME ***:
+# use a small set for validation for now
+# as the system needs tons of RAM to do convolutions
+# on a larger set. We need faster turnaround for now.
+valid_dataset = valid_dataset[:200, :]
+valid_labels = valid_labels[:200]
+test_dataset = test_dataset[:2000, :]
+test_labels = test_labels[:2000]
+
 # *** SEEME ***:
-# used for debugging a architecture
+# used for validating an architecture
 # on a small dataset, if the model overfits to 100% minibatch or training accuracy,
-# model if about right and hyperparameter tuning is required.
-# train_dataset = train_dataset[:50, :]
-# train_labels = train_labels[:50]
-# BATCH_SIZE = 10
-# NUM_STEPS = 2000
+# model is about right and hyperparameter tuning is required.
+validate_arch = False
+if validate_arch:
+    print("Validating architecture")
+    train_dataset = train_dataset[:100, :]
+    train_labels = train_labels[:100]
+    valid_dataset = valid_dataset[:10, :]
+    valid_labels = valid_labels[:10]
+    test_dataset = test_dataset[:10, :]
+    test_labels = test_labels[:10]
+    BATCH_SIZE = 10
+    #NUM_STEPS = 2000
 
 print('Training set', train_dataset.shape, train_labels.shape)
 print('Validation set', valid_dataset.shape, valid_labels.shape)
@@ -80,7 +96,7 @@ def setup_conv_net(X, weights, biases, train=False):
 
     # introduce a dropout with probability 0.5 only for training
     # to avoid overfitting.
-    if train:
+    if False:
         pool = tf.nn.dropout(pool, 0.5)
 
     # reshape the resulting cuboid to feed to the
@@ -88,7 +104,7 @@ def setup_conv_net(X, weights, biases, train=False):
     shape = pool.get_shape().as_list()
     reshape = tf.reshape(pool,
                          [shape[0], shape[1] * shape[2] * shape[3]])
-    print("final pool shape: {}".format(shape))
+
     hidden = tf.nn.relu(tf.matmul(reshape, weights['fc1']) + biases['fc1'])
 
     logits = tf.matmul(hidden, weights['out']) + biases['out']
@@ -107,16 +123,16 @@ with graph.as_default():
 
     # Store layers weight & bias
     weights = {
-        'conv1': tf.Variable(tf.truncated_normal([5, 5, NUM_CHANNELS, 16])), # 5x5 kernel, depth 16
-        'conv2': tf.Variable(tf.truncated_normal([5, 5, 16, 32])), # 5x5 kernel, depth 32
+        'conv1': tf.Variable(tf.truncated_normal([5, 5, NUM_CHANNELS, 32], stddev=0.1)), # 5x5 kernel, depth 32
+        'conv2': tf.Variable(tf.truncated_normal([5, 5, 32, 64], stddev=0.1)), # 5x5 kernel, depth 64
         # after 2 max pooling operations, the feature maps will have 1/(2*2) of the original spatial dimensions
-        'fc1': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 32, N_HIDDEN_1])),
-        'out': tf.Variable(tf.truncated_normal([N_HIDDEN_1, NUM_LABELS]))
+        'fc1': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 64, N_HIDDEN_1], stddev=0.1)),
+        'out': tf.Variable(tf.truncated_normal([N_HIDDEN_1, NUM_LABELS], stddev=0.1))
         }
 
     biases = {
-        'conv1': tf.Variable(tf.zeros([16])),
-        'conv2': tf.Variable(tf.zeros([32])),
+        'conv1': tf.Variable(tf.zeros([32])),
+        'conv2': tf.Variable(tf.zeros([64])),
         'fc1': tf.Variable(tf.truncated_normal([N_HIDDEN_1])),
         'out': tf.Variable(tf.truncated_normal([NUM_LABELS]))
         }
@@ -134,7 +150,7 @@ with graph.as_default():
         + LAMBDA * tf.nn.l2_loss(biases['out']))
 
     # Optimizer.
-    optimizer = tf.train.GradientDescentOptimizer(LEARNING_RATE).minimize(loss)
+    optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
 
     # Predictions for the training, validation, and test data.
     train_prediction = tf.nn.softmax(logits)
