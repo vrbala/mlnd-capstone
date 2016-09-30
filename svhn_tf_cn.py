@@ -27,8 +27,8 @@ NUM_LABELS = 10
 BATCH_SIZE = 64
 N_HIDDEN_1 = 128
 LEARNING_RATE = 0.001
-LAMBDA = 0.00001 # regularization rate
-NUM_STEPS = 50000
+LAMBDA = 0.0001 # regularization rate
+NUM_STEPS = 5000
 NUM_CHANNELS = 1
 
 def reformat(dataset, labels):
@@ -44,7 +44,7 @@ valid_dataset, valid_labels = reformat(valid_dataset, valid_labels)
 test_dataset, test_labels = reformat(test_dataset, test_labels)
 
 # ***SEEME ***:
-# use a small set for validation for now
+# use a small set for validation and test for now
 # as the system needs tons of RAM to do convolutions
 # on a larger set. We need faster turnaround for now.
 valid_dataset = valid_dataset[:200, :]
@@ -83,10 +83,10 @@ def setup_conv_net(X, weights, biases, train=False):
                         strides=[1, 1, 1, 1],
                         padding='SAME')
     relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv1']))
-    pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
-    print("Pool1 shape: " + str(pool.get_shape().as_list()))
+    #pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+    #print("Pool1 shape: " + str(pool.get_shape().as_list()))
 
-    conv = tf.nn.conv2d(pool,
+    conv = tf.nn.conv2d(relu,
                         weights['conv2'],
                         strides=[1, 1, 1, 1],
                         padding='SAME')
@@ -94,9 +94,17 @@ def setup_conv_net(X, weights, biases, train=False):
     pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
     print("Pool2 shape: " + str(pool.get_shape().as_list()))
 
+    conv = tf.nn.conv2d(pool,
+                        weights['conv3'],
+                        strides=[1, 1, 1, 1],
+                        padding='SAME')
+    relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv3']))
+    pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+    print("Pool3 shape: " + str(pool.get_shape().as_list()))
+
     # introduce a dropout with probability 0.5 only for training
     # to avoid overfitting.
-    if False:
+    if train:
         pool = tf.nn.dropout(pool, 0.5)
 
     # reshape the resulting cuboid to feed to the
@@ -125,14 +133,16 @@ with graph.as_default():
     weights = {
         'conv1': tf.Variable(tf.truncated_normal([5, 5, NUM_CHANNELS, 32], stddev=0.1)), # 5x5 kernel, depth 32
         'conv2': tf.Variable(tf.truncated_normal([5, 5, 32, 64], stddev=0.1)), # 5x5 kernel, depth 64
+        'conv3': tf.Variable(tf.truncated_normal([5, 5, 64, 128], stddev=0.1)), # 5x5 kernel, depth 128
         # after 2 max pooling operations, the feature maps will have 1/(2*2) of the original spatial dimensions
-        'fc1': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 64, N_HIDDEN_1], stddev=0.1)),
+        'fc1': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=0.1)),
         'out': tf.Variable(tf.truncated_normal([N_HIDDEN_1, NUM_LABELS], stddev=0.1))
         }
 
     biases = {
         'conv1': tf.Variable(tf.zeros([32])),
         'conv2': tf.Variable(tf.zeros([64])),
+        'conv3': tf.Variable(tf.zeros([128])),
         'fc1': tf.Variable(tf.truncated_normal([N_HIDDEN_1])),
         'out': tf.Variable(tf.truncated_normal([NUM_LABELS]))
         }
@@ -142,10 +152,12 @@ with graph.as_default():
         tf.nn.softmax_cross_entropy_with_logits(logits, tf_train_labels)
         + LAMBDA * tf.nn.l2_loss(weights['conv1'])
         + LAMBDA * tf.nn.l2_loss(weights['conv2'])
+        + LAMBDA * tf.nn.l2_loss(weights['conv3'])
         + LAMBDA * tf.nn.l2_loss(weights['fc1'])
         + LAMBDA * tf.nn.l2_loss(weights['out'])
         + LAMBDA * tf.nn.l2_loss(biases['conv1'])
         + LAMBDA * tf.nn.l2_loss(biases['conv2'])
+        + LAMBDA * tf.nn.l2_loss(biases['conv3'])
         + LAMBDA * tf.nn.l2_loss(biases['fc1'])
         + LAMBDA * tf.nn.l2_loss(biases['out']))
 
