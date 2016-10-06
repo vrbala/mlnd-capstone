@@ -23,20 +23,21 @@ with open(pickle_file, 'rb') as f:
 
 # parameters
 IMAGE_SIZE = 32
-NUM_LABELS = 6
+NUM_LABELS = 10 # digits 0-9
 BATCH_SIZE = 64
 N_HIDDEN_1 = 128
 LEARNING_RATE = 0.001
 LAMBDA = 0.0001 # regularization rate
 NUM_STEPS = 5000
-NUM_CHANNELS = 1
+NUM_CHANNELS = 3
 
 def reformat(dataset, labels):
-    dataset = dataset.mean(axis=3) # convert to grayscale
+    dataset = dataset.reshape(-1, NUM_CHANNELS, IMAGE_SIZE, IMAGE_SIZE)
+    dataset = dataset.mean(axis=1) # convert to grayscale
     # dataset = dataset.reshape((-1, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS)).astype(np.float32)
     # Map 0 to [1.0, 0.0, 0.0 ...], 1 to [0.0, 1.0, 0.0 ...]
     # labels = (np.arange(1,11) == labels[:,None]).astype(np.float32)
-    return dataset, labels
+    return dataset, labels.astype(np.int32)
 
 print("After (optional) reformatting ... ")
 train_dataset, train_labels = reformat(train_dataset, train_labels)
@@ -139,7 +140,7 @@ with graph.as_default():
     # at run time with a training minibatch.
     tf_train_dataset = tf.placeholder(tf.float32,
                                       shape=(BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS))
-    tf_train_labels = tf.placeholder(tf.float32, shape=(BATCH_SIZE, NUM_LABELS))
+    tf_train_labels = tf.placeholder(tf.int32, shape=(BATCH_SIZE, 6)) # 6 here is 1 digit for length of sequence and 5 for digits themselves
     tf_valid_dataset = tf.constant(valid_dataset)
     tf_test_dataset = tf.constant(test_dataset)
 
@@ -150,7 +151,7 @@ with graph.as_default():
         'conv3': tf.Variable(tf.truncated_normal([5, 5, 64, 128], stddev=0.1)), # 5x5 kernel, depth 128
         # after 2 max pooling operations, the feature maps will have 1/(2*2) of the original spatial dimensions
         'fc1': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=0.1)),
-        'out1': tf.Variable(tf.truncated_normal([N_HIDDEN_1, NUM_LABELS], stddev=0.1)),
+        'out1': tf.Variable(tf.truncated_normal([N_HIDDEN_1, 5], stddev=0.1)), # length of the sequence: here 1-5 - TODO: make it configurable
         'fc2': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=0.1)),
         'out2': tf.Variable(tf.truncated_normal([N_HIDDEN_1, NUM_LABELS], stddev=0.1)),
         'fc3': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=0.1)),
@@ -168,7 +169,7 @@ with graph.as_default():
         'conv2': tf.Variable(tf.zeros([64])),
         'conv3': tf.Variable(tf.zeros([128])),
         'fc1': tf.Variable(tf.truncated_normal([N_HIDDEN_1])),
-        'out1': tf.Variable(tf.truncated_normal([NUM_LABELS])),
+        'out1': tf.Variable(tf.truncated_normal([5])), # length of sequence: here 1-5
         'fc2': tf.Variable(tf.truncated_normal([N_HIDDEN_1])),
         'out2': tf.Variable(tf.truncated_normal([NUM_LABELS])),
         'fc3': tf.Variable(tf.truncated_normal([N_HIDDEN_1])),
@@ -182,13 +183,15 @@ with graph.as_default():
         }
 
     logits1, logits2, logits3, logits4, logits5, logits6 = setup_conv_net(tf_train_dataset, weights, biases, train=True)
+    print tf_train_labels.get_shape().as_list()
+    print logits1.get_shape().as_list()
     loss = tf.reduce_mean(
-        tf.nn.sparse_softmax_cross_entropy_with_logits(logits1, tf_train_labels[0])
-        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits2, tf_train_labels[1])
-        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits3, tf_train_labels[2])
-        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits4, tf_train_labels[3])
-        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits5, tf_train_labels[4])
-        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits6, tf_train_labels[5])
+        tf.nn.sparse_softmax_cross_entropy_with_logits(logits1, tf_train_labels[:, 0])
+        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits2, tf_train_labels[:, 1])
+        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits3, tf_train_labels[:, 2])
+        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits4, tf_train_labels[:, 3])
+        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits5, tf_train_labels[:, 4])
+        + tf.nn.sparse_softmax_cross_entropy_with_logits(logits6, tf_train_labels[:, 5])
         + LAMBDA * tf.nn.l2_loss(weights['conv1'])
         + LAMBDA * tf.nn.l2_loss(weights['conv2'])
         + LAMBDA * tf.nn.l2_loss(weights['conv3'])
@@ -218,13 +221,14 @@ with graph.as_default():
         + LAMBDA * tf.nn.l2_loss(biases['fc5'])
         + LAMBDA * tf.nn.l2_loss(biases['out5'])
         + LAMBDA * tf.nn.l2_loss(biases['fc6'])
-        + LAMBDA * tf.nn.l2_loss(biases['out6']))
+        + LAMBDA * tf.nn.l2_loss(biases['out6'])
+        )
 
     # Optimizer.
     optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
 
     # Predictions for the training, validation, and test data.
-    train_prediction = tf.nn.softmax(logits)
+    train_prediction = tf.nn.softmax(logits1)
     valid_logits = setup_conv_net(tf_valid_dataset, weights, biases)
     valid_prediction = tf.nn.softmax(valid_logits)
     test_logits = setup_conv_net(tf_test_dataset, weights, biases)
