@@ -7,7 +7,7 @@ from scipy import misc
 # Typical setup to include TensorFlow.
 import tensorflow as tf
 
-root = 'test'
+root = 'train'
 print "Working on {}".format(root)
 
 num_of_files = len(os.listdir("{}/proc/".format(root)))
