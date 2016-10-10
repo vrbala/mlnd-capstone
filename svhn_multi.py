@@ -8,7 +8,7 @@ from scipy import misc
 import tensorflow as tf
 
 # load and format the data
-pickle_file = 'SVHN_multi.pickle'
+pickle_file = 'SVHN_multi1.pickle'
 
 with open(pickle_file, 'rb') as f:
     save = pickle.load(f)
@@ -25,10 +25,10 @@ with open(pickle_file, 'rb') as f:
 
 # parameters
 IMAGE_SIZE = 32
-NUM_LABELS = 10 # digits 0-9
-BATCH_SIZE = 1
+NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
+BATCH_SIZE = 64
 N_HIDDEN_1 = 128
-LEARNING_RATE = 0.00001
+LEARNING_RATE = 0.001
 LAMBDA = 0.00001 # regularization rate
 NUM_STEPS = 5000
 NUM_CHANNELS = 1
@@ -68,7 +68,7 @@ test_labels = test_labels[:2000]
 # used for validating an architecture
 # on a small dataset, if the model overfits to 100% minibatch or training accuracy,
 # model is about right and hyperparameter tuning is required.
-validate_arch = False
+validate_arch = True
 if validate_arch:
     print("Validating architecture")
     train_dataset = train_dataset[:100, :]
@@ -77,7 +77,7 @@ if validate_arch:
     valid_labels = valid_labels[:10]
     test_dataset = test_dataset[:10, :]
     test_labels = test_labels[:10]
-    BATCH_SIZE = 16
+    BATCH_SIZE = 10
     NUM_STEPS = 1000
 
 print('Inputs to the model')
@@ -149,14 +149,16 @@ def setup_conv_net(X, weights, biases, train=False):
     to_print.append(weights['out1'])
     to_print.append(biases['out1'])
     to_print.append(logits)
+    to_print.append(tf.nn.log_softmax(logits))
     # logits = tf.Print(logits, to_print,
-    #                             "conv, relu, conv, relu, pool, conv, relu, pool, W & b(fc1 and out1), logits\n",
-    #                             summarize=5)
+    #                             "conv, relu, conv, relu, pool, conv, relu, pool, W & b(fc1 and out1), logits, softmax\n",
+    #                             summarize=10)
     logitss.append(logits)
 
     for i in range(2, NUM_LETTERS+2):
         hidden = tf.nn.relu(tf.matmul(reshape, weights['fc{}'.format(i)]) + biases['fc{}'.format(i)])
-        logitss.append(tf.matmul(hidden, weights['out{}'.format(i)]) + biases['out{}'.format(i)])
+        logits = tf.matmul(hidden, weights['out{}'.format(i)]) + biases['out{}'.format(i)]
+        logitss.append(logits)
 
     return logitss
 
@@ -217,6 +219,7 @@ with graph.as_default():
 
     # losses for weights and biases
     loss =  tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[0], tf_train_labels[:, 0])
+    # loss = tf.Print(loss, [logitss[0], tf_train_labels[:, 0]], "Logits and labels", summarize=10)
     for i in range(2, NUM_LETTERS+2):
         loss += tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[i-1], tf_train_labels[:, i-1])
 
@@ -240,8 +243,11 @@ with graph.as_default():
     # loss is 1-D array of size - batch_size
     loss = tf.reduce_mean(loss)
 
-    # Optimizer.
-    optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
+    # Optimizer - calculate and apply gradients independently.
+    # helps in debugging
+    optimizer = tf.train.AdamOptimizer(LEARNING_RATE)
+    gradients = optimizer.compute_gradients(loss)
+    optimizer = optimizer.apply_gradients(gradients)
 
     # Predictions for the training, validation, and test data.
     train_prediction = logitss_to_probs(logitss)
@@ -288,7 +294,7 @@ with tf.Session(graph=graph) as session:
     except:
       sys.exit(0)
 
-    if (step % 500 == 0):
+    if (step % 50 == 0):
       print("Minibatch loss at step %d: %f" % (step, l))
       print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_labels))
       valid_predictions = session.run(valid_prediction)
