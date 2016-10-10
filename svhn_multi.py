@@ -1,6 +1,7 @@
 #! /usr/local/bin/python
 
 import sys
+import math
 import cPickle as pickle
 import numpy as np
 from scipy import misc
@@ -51,8 +52,8 @@ test_dataset, test_labels = reformat(test_dataset, test_labels)
 # weedout the bad images
 # they cause NaN loss function and thus NaN weights
 # need to see why those images occur
-train_dataset = np.delete(train_dataset, (794), axis=0)
-train_labels = np.delete(train_labels, (794), axis=0)
+# train_dataset = np.delete(train_dataset, (794), axis=0)
+# train_labels = np.delete(train_labels, (794), axis=0)
 
 # *** SEEME ***:
 # use a small set for validation and test for now
@@ -148,9 +149,9 @@ def setup_conv_net(X, weights, biases, train=False):
     to_print.append(weights['out1'])
     to_print.append(biases['out1'])
     to_print.append(logits)
-    logits = tf.Print(logits, to_print,
-                                "conv, relu, conv, relu, pool, conv, relu, pool, W & b(fc1 and out1), logits\n",
-                                summarize=5)
+    # logits = tf.Print(logits, to_print,
+    #                             "conv, relu, conv, relu, pool, conv, relu, pool, W & b(fc1 and out1), logits\n",
+    #                             summarize=5)
     logitss.append(logits)
 
     for i in range(2, NUM_LETTERS+2):
@@ -185,18 +186,18 @@ with graph.as_default():
     # Store layers weight & bias
     # after 2 max pooling operations, the feature maps will have 1/(2*2) of the original spatial dimensions
     weights = {
-        'conv1': tf.Variable(tf.truncated_normal([5, 5, NUM_CHANNELS, 32], stddev=0.1)), # 5x5 kernel, depth 32
-        'conv2': tf.Variable(tf.truncated_normal([5, 5, 32, 64], stddev=0.1)), # 5x5 kernel, depth 64
-        'conv3': tf.Variable(tf.truncated_normal([5, 5, 64, 128], stddev=0.1)), # 5x5 kernel, depth 128
+        'conv1': tf.Variable(tf.truncated_normal([5, 5, NUM_CHANNELS, 32], stddev=2.0/math.sqrt(5*5*NUM_CHANNELS*32))), # 5x5 kernel, depth 32
+        'conv2': tf.Variable(tf.truncated_normal([5, 5, 32, 64], stddev=2.0/(5*5*32*64))), # 5x5 kernel, depth 64
+        'conv3': tf.Variable(tf.truncated_normal([5, 5, 64, 128], stddev=2.0/(math.sqrt(5*5*64*128)))), # 5x5 kernel, depth 128
         # for the length of the sequence of digits
-        'fc1': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=0.1)),
-        'out1': tf.Variable(tf.truncated_normal([N_HIDDEN_1, 5], stddev=0.1)), # length of the sequence: here 1-5 - TODO: make it configurable
+        'fc1': tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=2.0/math.sqrt(IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128))),
+        'out1': tf.Variable(tf.truncated_normal([N_HIDDEN_1, 5], stddev=2.0/math.sqrt(N_HIDDEN_1))), # length of the sequence: here 1-5 - TODO: make it configurable
         }
 
     # for individual digits
     for i in range(2, NUM_LETTERS+2):
-        weights['fc{}'.format(i)] = tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=0.1))
-        weights['out{}'.format(i)] = tf.Variable(tf.truncated_normal([N_HIDDEN_1, NUM_LABELS], stddev=0.1))
+        weights['fc{}'.format(i)] = tf.Variable(tf.truncated_normal([IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=2.0/math.sqrt(IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128)))
+        weights['out{}'.format(i)] = tf.Variable(tf.truncated_normal([N_HIDDEN_1, NUM_LABELS], stddev=2.0/math.sqrt(N_HIDDEN_1)))
 
     biases = {
         'conv1': tf.Variable(tf.zeros([32])),
