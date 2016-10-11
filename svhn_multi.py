@@ -37,6 +37,8 @@ NUM_CHANNELS = 1
 # number of letters in the sequence to transcribe
 NUM_LETTERS = 5
 STDDEV = 0.05
+RESTORE = False
+MODEL_CKPT = 'model.ckpt'
 
 def reformat(dataset, labels):
     dataset = dataset.reshape(-1, 3, IMAGE_SIZE, IMAGE_SIZE)
@@ -64,7 +66,7 @@ test_labels = test_labels[:2000]
 # used for validating an architecture
 # on a small dataset, if the model overfits to 100% minibatch or training accuracy,
 # model is about right and hyperparameter tuning is required.
-validate_arch = False
+validate_arch = True
 if validate_arch:
     print("Validating architecture")
     train_dataset = train_dataset[:100, :]
@@ -133,10 +135,13 @@ tf.set_random_seed(4096)
 with tf.name_scope('inputs'):
   tf_train_dataset = tf.placeholder(tf.float32,
                                   shape=(BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS))
+  tf.image_summary('input', tf_train_dataset, max_images=10)
   # 6 here is 1 digit for length of sequence and 5 for digits themselves
   tf_train_labels = tf.placeholder(tf.int32, shape=(BATCH_SIZE, 6))
   tf_valid_dataset = tf.constant(valid_dataset)
+  tf.image_summary('validation', tf_valid_dataset, max_images=10)
   tf_test_dataset = tf.constant(test_dataset)
+  tf.image_summary('test', tf_test_dataset, max_images=10)
 
 # Store layers weight & bias
 # after 2 max pooling operations, the feature maps will have 1/(2*2) of the original spatial dimensions
@@ -230,6 +235,7 @@ def setup_conv_net(X, weights, biases, train=False):
   to_print.append(biases['out1'])
   to_print.append(logits)
   to_print.append(tf.nn.log_softmax(logits))
+  # debugging op --
   # logits = tf.Print(logits, to_print,
   #                             "conv, relu, conv, relu, pool, conv, relu, pool, W & b(fc1 and out1), logits, softmax\n",
   #                             summarize=10)
@@ -246,6 +252,7 @@ logitss = setup_conv_net(tf_train_dataset, weights, biases, train=True)
 
 # losses for weights and biases
 loss =  tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[0], tf_train_labels[:, 0])
+# debugging op --
 # loss = tf.Print(loss, [logitss[0], tf_train_labels[:, 0]], "Logits and labels", summarize=10)
 for i in range(2, NUM_LETTERS+2):
   loss += tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[i-1], tf_train_labels[:, i-1])
@@ -297,34 +304,50 @@ merged = tf.merge_all_summaries()
 train_writer = tf.train.SummaryWriter('logs' + '/train',
                                       session.graph)
 
+init = tf.initialize_all_variables()
+saver = tf.train.Saver()
+
 with session.as_default():
   # Start running the graph operatons
-  tf.initialize_all_variables().run()
-  print("Initialized")
-  for step in range(NUM_STEPS):
+  if not RESTORE:
+    session.run(init)
+    print("Initialized")
+  else:
+    saver.restore(session, MODEL_CKPT)
+    print("Restored")
 
-    # Pick an offset within the training data, which has been randomized.
-    # Note: we could use better randomization across epochs.
-    offset = (step * BATCH_SIZE) % (train_labels.shape[0] - BATCH_SIZE)
-    # Generate a minibatch.
-    batch_data = train_dataset[offset:(offset + BATCH_SIZE), :]
-    batch_labels = train_labels[offset:(offset + BATCH_SIZE), :]
-    # Prepare a dictionary telling the session where to feed the minibatch.
-    # The key of the dictionary is the placeholder node of the graph to be fed,
-    # and the value is the numpy array to feed to it.
-    feed_dict = {tf_train_dataset : batch_data, tf_train_labels : batch_labels}
-    _, l, predictions = session.run(
-      [optimizer, loss, train_prediction], feed_dict=feed_dict)
+  if not RESTORE:
 
-    if (step % 100 == 0):
-      print("Minibatch loss at step %d: %f" % (step, l))
-      print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_labels))
-      valid_predictions = session.run(valid_prediction)
-      print("Validation accuracy: %.1f%%" % accuracy(valid_predictions, valid_labels))
+    # run the training steps if we didn't retore a stored model
+    for step in range(NUM_STEPS):
 
-      summary = session.run(merged)
-      train_writer.add_summary(summary, step)
+      # Pick an offset within the training data, which has been randomized.
+      # Note: we could use better randomization across epochs.
+      offset = (step * BATCH_SIZE) % (train_labels.shape[0] - BATCH_SIZE)
+      # Generate a minibatch.
+      batch_data = train_dataset[offset:(offset + BATCH_SIZE), :]
+      batch_labels = train_labels[offset:(offset + BATCH_SIZE), :]
+      # Prepare a dictionary telling the session where to feed the minibatch.
+      # The key of the dictionary is the placeholder node of the graph to be fed,
+      # and the value is the numpy array to feed to it.
+      feed_dict = {tf_train_dataset : batch_data, tf_train_labels : batch_labels}
+      _, l, predictions = session.run(
+        [optimizer, loss, train_prediction], feed_dict=feed_dict)
 
+      if (step % 100 == 0):
+        print("Minibatch loss at step %d: %f" % (step, l))
+        print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_labels))
+        valid_predictions = session.run(valid_prediction)
+        print("Validation accuracy: %.1f%%" % accuracy(valid_predictions, valid_labels))
+
+        summary = session.run(merged, feed_dict=feed_dict)
+        train_writer.add_summary(summary, step)
+
+    # store the model for restoration later
+    saved_in = saver.save(session, MODEL_CKPT)
+    print("Model saved in {}".format(saved_in))
+
+  # predict the test labels
   test_predictions = session.run(test_prediction)
   print("Test accuracy: %.1f%%" % accuracy(test_predictions, test_labels))
 
