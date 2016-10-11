@@ -8,7 +8,7 @@ from scipy import misc
 import tensorflow as tf
 
 # load and format the data
-pickle_file = 'SVHN_multi1.pickle'
+pickle_file = 'SVHN_multi.pickle'
 
 with open(pickle_file, 'rb') as f:
     save = pickle.load(f)
@@ -29,11 +29,11 @@ NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit
 BATCH_SIZE = 64
 N_HIDDEN_1 = 128
 LEARNING_RATE = 0.001
-LAMBDA = 0.00001 # regularization rate
+LAMBDA = 0.0001 # regularization rate
 NUM_STEPS = 5000
 NUM_CHANNELS = 1
 # number of letters in the sequence to transcribe
-NUM_LETTERS = 1
+NUM_LETTERS = 2
 
 def reformat(dataset, labels):
     dataset = dataset.reshape(-1, 3, IMAGE_SIZE, IMAGE_SIZE)
@@ -68,7 +68,7 @@ test_labels = test_labels[:2000]
 # used for validating an architecture
 # on a small dataset, if the model overfits to 100% minibatch or training accuracy,
 # model is about right and hyperparameter tuning is required.
-validate_arch = True
+validate_arch = False
 if validate_arch:
     print("Validating architecture")
     train_dataset = train_dataset[:100, :]
@@ -132,7 +132,7 @@ def setup_conv_net(X, weights, biases, train=False):
 
     # introduce a dropout with probability 0.5 only for training
     # to avoid overfitting.
-    if False:
+    if train:
         pool = tf.nn.dropout(pool, 0.5)
 
     # reshape the resulting cuboid to feed to the
@@ -294,7 +294,7 @@ with tf.Session(graph=graph) as session:
     except:
       sys.exit(0)
 
-    if (step % 50 == 0):
+    if (step % 100 == 0):
       print("Minibatch loss at step %d: %f" % (step, l))
       print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_labels))
       valid_predictions = session.run(valid_prediction)
