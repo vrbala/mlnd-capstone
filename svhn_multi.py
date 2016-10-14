@@ -6,7 +6,7 @@ import sys
 import math
 import cPickle as pickle
 import numpy as np
-from scipy import misc
+import operator
 import tensorflow as tf
 
 # load and format the data
@@ -28,16 +28,16 @@ with open(pickle_file, 'rb') as f:
 # parameters
 IMAGE_SIZE = 32
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 N_HIDDEN_1 = 128
 LEARNING_RATE = 0.001
-LAMBDA = 0.00001 # regularization rate
+LAMBDA = 0.0 # regularization rate
 NUM_STEPS = 10000
 NUM_CHANNELS = 1
 # number of letters in the sequence to transcribe
 NUM_LETTERS = 5
-STDDEV = 0.05
-RESTORE = False
+STDDEV = 'fanIn'
+RESTORE = True
 MODEL_CKPT = 'model.ckpt'
 
 def reformat(dataset, labels):
@@ -66,11 +66,11 @@ test_labels = test_labels[:2000]
 # used for validating an architecture
 # on a small dataset, if the model overfits to 100% minibatch or training accuracy,
 # model is about right and hyperparameter tuning is required.
-validate_arch = True
+validate_arch = False
 if validate_arch:
     print("Validating architecture")
-    train_dataset = train_dataset[:100, :]
-    train_labels = train_labels[:100]
+    train_dataset = train_dataset[:1000, :]
+    train_labels = train_labels[:1000]
     valid_dataset = valid_dataset[:10, :]
     valid_labels = valid_labels[:10]
     test_dataset = test_dataset[:10, :]
@@ -112,7 +112,7 @@ def weight_variable(name, shape, stddev=1.0):
 def bias_variable(name, shape):
   # name: name of the variable
   # shape: list representing shape of Tensor. compatible with tf shape
-  var = tf.constant(0.1, shape=shape)
+  var = tf.constant(1.0, shape=shape)
   var = tf.Variable(var)
   variable_summaries(var, name)
   return var
@@ -127,8 +127,6 @@ def logitss_to_probs(logitss):
     # output: a 2-D array of softmax operations (they have to be eval'ed in tf session)
     # just applies softmax on each of the logits
     return map(tf.nn.softmax, logitss)
-
-tf.set_random_seed(4096)
 
 # Input data. For the training data, we use a placeholder that will be fed
 # at run time with a training minibatch.
@@ -151,7 +149,7 @@ weights = {
   'conv3': weight_variable('conv3/weights', [5, 5, 64, 128], stddev=STDDEV), # 5x5 kernel, depth 128
   # for the length of the sequence of digits
   'fc1': weight_variable('fc1/weights', [IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=STDDEV),
-  'out1': weight_variable('out/weights', [N_HIDDEN_1, 5], stddev=STDDEV), # length of the sequence: here 1-5 - TODO: make it configurable
+  'out1': weight_variable('out1/weights', [N_HIDDEN_1, 5], stddev=STDDEV), # length of the sequence: here 1-5 - TODO: make it configurable
   }
 
 # for individual digits
@@ -218,7 +216,7 @@ def setup_conv_net(X, weights, biases, train=False):
   # introduce a dropout with probability 0.5 only for training
   # to avoid overfitting.
   if train:
-    pool = tf.nn.dropout(pool, 0.5)
+    pool = tf.nn.dropout(pool, 0.8)
 
   # reshape the resulting cuboid to feed to the
   # downstream fully connected layers
@@ -251,11 +249,11 @@ def setup_conv_net(X, weights, biases, train=False):
 logitss = setup_conv_net(tf_train_dataset, weights, biases, train=True)
 
 # losses for weights and biases
-loss =  tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[0], tf_train_labels[:, 0])
+loss =  tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[0], tf_train_labels[:, 0]))
 # debugging op --
 # loss = tf.Print(loss, [logitss[0], tf_train_labels[:, 0]], "Logits and labels", summarize=10)
 for i in range(2, NUM_LETTERS+2):
-  loss += tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[i-1], tf_train_labels[:, i-1])
+  loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[i-1], tf_train_labels[:, i-1]))
 
 loss += LAMBDA * tf.nn.l2_loss(weights['conv1'])
 loss += LAMBDA * tf.nn.l2_loss(weights['conv2'])
@@ -274,14 +272,11 @@ for i in range(2, NUM_LETTERS+2):
   loss += LAMBDA * tf.nn.l2_loss(biases['fc{}'.format(i)])
   loss += LAMBDA * tf.nn.l2_loss(biases['out{}'.format(i)])
 
-# loss is 1-D array of size - batch_size
-loss = tf.reduce_mean(loss)
+# add a summary for loss
+tf.scalar_summary('loss', loss)
 
-# Optimizer - calculate and apply gradients independently.
-# helps in debugging
-optimizer = tf.train.AdamOptimizer(LEARNING_RATE)
-gradients = optimizer.compute_gradients(loss)
-optimizer = optimizer.apply_gradients(gradients)
+# Optimizer
+optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
 
 # Predictions for the training, validation, and test data.
 train_prediction = logitss_to_probs(logitss)
@@ -316,7 +311,7 @@ with session.as_default():
     saver.restore(session, MODEL_CKPT)
     print("Restored")
 
-  if not RESTORE:
+  if True:
 
     # run the training steps if we didn't retore a stored model
     for step in range(NUM_STEPS):
@@ -334,7 +329,7 @@ with session.as_default():
       _, l, predictions = session.run(
         [optimizer, loss, train_prediction], feed_dict=feed_dict)
 
-      if (step % 100 == 0):
+      if (step % 200 == 0):
         print("Minibatch loss at step %d: %f" % (step, l))
         print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_labels))
         valid_predictions = session.run(valid_prediction)
