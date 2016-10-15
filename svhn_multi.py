@@ -28,16 +28,16 @@ with open(pickle_file, 'rb') as f:
 # parameters
 IMAGE_SIZE = 32
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 N_HIDDEN_1 = 128
 LEARNING_RATE = 0.001
-LAMBDA = 0.0 # regularization rate
+LAMBDA = 0.0001 # regularization rate
 NUM_STEPS = 10000
 NUM_CHANNELS = 1
 # number of letters in the sequence to transcribe
-NUM_LETTERS = 5
-STDDEV = 'fanIn'
-RESTORE = True
+NUM_LETTERS = 3
+STDDEV = 0.1
+RESTORE = False
 MODEL_CKPT = 'model.ckpt'
 
 def reformat(dataset, labels):
@@ -66,17 +66,17 @@ test_labels = test_labels[:2000]
 # used for validating an architecture
 # on a small dataset, if the model overfits to 100% minibatch or training accuracy,
 # model is about right and hyperparameter tuning is required.
-validate_arch = False
+validate_arch = True
 if validate_arch:
     print("Validating architecture")
-    train_dataset = train_dataset[:1000, :]
-    train_labels = train_labels[:1000]
+    train_dataset = train_dataset[:100, :]
+    train_labels = train_labels[:100]
     valid_dataset = valid_dataset[:10, :]
     valid_labels = valid_labels[:10]
     test_dataset = test_dataset[:10, :]
     test_labels = test_labels[:10]
     BATCH_SIZE = 10
-    NUM_STEPS = 1000
+    NUM_STEPS = 3000
 
 print('Inputs to the model')
 print('Training set', train_dataset.shape, train_labels.shape)
@@ -173,7 +173,6 @@ for i in range(2, NUM_LETTERS+2):
 
 def setup_conv_net(X, weights, biases, train=False):
 
-  to_print = []
   # convolution layers with ReLU activations and max pooling
   conv = tf.nn.conv2d(X,
                       weights['conv1'],
@@ -183,10 +182,6 @@ def setup_conv_net(X, weights, biases, train=False):
   #pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
   #print("Pool1 shape: " + str(pool.get_shape().as_list()))
 
-  to_print.append(weights['conv1'])
-  to_print.append(conv)
-  to_print.append(relu)
-
   conv = tf.nn.conv2d(relu,
                       weights['conv2'],
                       strides=[1, 1, 1, 1],
@@ -195,11 +190,6 @@ def setup_conv_net(X, weights, biases, train=False):
   pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool2')
   print("Pool2 shape: " + str(pool.get_shape().as_list()))
 
-  to_print.append(weights['conv2'])
-  to_print.append(conv)
-  to_print.append(relu)
-  to_print.append(pool)
-
   conv = tf.nn.conv2d(pool,
                       weights['conv3'],
                       strides=[1, 1, 1, 1],
@@ -207,11 +197,6 @@ def setup_conv_net(X, weights, biases, train=False):
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv3']), name='relu3')
   pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool3')
   print("Pool3 shape: " + str(pool.get_shape().as_list()))
-
-  to_print.append(weights['conv3'])
-  to_print.append(conv)
-  to_print.append(relu)
-  to_print.append(pool)
 
   # introduce a dropout with probability 0.5 only for training
   # to avoid overfitting.
@@ -227,21 +212,15 @@ def setup_conv_net(X, weights, biases, train=False):
   logitss = []
   hidden = tf.nn.relu(tf.matmul(reshape, weights['fc1']) + biases['fc1'], name='fc1')
   logits = tf.matmul(hidden, weights['out1']) + biases['out1']
-  to_print.append(weights['fc1'])
-  to_print.append(biases['fc1'])
-  to_print.append(weights['out1'])
-  to_print.append(biases['out1'])
-  to_print.append(logits)
-  to_print.append(tf.nn.log_softmax(logits))
-  # debugging op --
-  # logits = tf.Print(logits, to_print,
-  #                             "conv, relu, conv, relu, pool, conv, relu, pool, W & b(fc1 and out1), logits, softmax\n",
-  #                             summarize=10)
   logitss.append(logits)
 
   for i in range(2, NUM_LETTERS+2):
-    hidden = tf.nn.relu(tf.matmul(reshape, weights['fc{}'.format(i)]) + biases['fc{}'.format(i)], name='fc{}'.format(i))
-    logits = tf.matmul(hidden, weights['out{}'.format(i)]) + biases['out{}'.format(i)]
+    fc = 'fc{}'.format(i)
+    out = 'out{}'.format(i)
+    hidden = tf.nn.relu(tf.matmul(reshape, weights[fc]) + biases[fc], name=fc)
+    logits = tf.matmul(hidden, weights[out]) + biases[out]
+    # logits = tf.Print(logits, [weights[fc], biases[fc], weights[out], biases[out]],
+    #                   "weights and biases (fc and out) for digit {}".format(i), summarize=10)
     logitss.append(logits)
 
   return logitss
@@ -251,9 +230,13 @@ logitss = setup_conv_net(tf_train_dataset, weights, biases, train=True)
 # losses for weights and biases
 loss =  tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[0], tf_train_labels[:, 0]))
 # debugging op --
-# loss = tf.Print(loss, [logitss[0], tf_train_labels[:, 0]], "Logits and labels", summarize=10)
+to_print = []
+to_print.append(logitss[0])
 for i in range(2, NUM_LETTERS+2):
   loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[i-1], tf_train_labels[:, i-1]))
+  to_print.append(logitss[i-1])
+
+# loss = tf.Print(loss, to_print, "Logits 1 to N", summarize=10)
 
 loss += LAMBDA * tf.nn.l2_loss(weights['conv1'])
 loss += LAMBDA * tf.nn.l2_loss(weights['conv2'])
@@ -278,18 +261,33 @@ tf.scalar_summary('loss', loss)
 # Optimizer
 optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
 
-# Predictions for the training, validation, and test data.
+# Predictions for the training, validation data
 train_prediction = logitss_to_probs(logitss)
 valid_logitss = setup_conv_net(tf_valid_dataset, weights, biases)
 valid_prediction = logitss_to_probs(valid_logitss)
+
+# Test data predictions
 test_logitss = setup_conv_net(tf_test_dataset, weights, biases)
 test_prediction = logitss_to_probs(test_logitss)
+
+# setup validation loss
+tf_valid_labels = tf.constant(valid_labels, dtype=tf.int32)
+vloss =  tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(valid_logitss[0], tf_valid_labels[:, 0]))
+for i in range(2, NUM_LETTERS+2):
+  vloss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(valid_logitss[i-1], tf_valid_labels[:, i-1]))
+
+tf.scalar_summary('validation loss', vloss)
+
 
 def accuracy(predictions, labels):
   # predictions is 2-D array of probabilities
   # labels are not one-hot encoded
   predictions = np.array(map(probs_to_labels, predictions)).T
   labels = labels[:, 0:NUM_LETTERS+1].reshape(predictions.shape)
+  print("\nPredictions")
+  print(predictions)
+  print("\nExpected Labels")
+  print(labels)
   return (100.0 * np.sum((np.equal(predictions, labels)).all(axis=1))
           / predictions.shape[0])
 
@@ -329,10 +327,12 @@ with session.as_default():
       _, l, predictions = session.run(
         [optimizer, loss, train_prediction], feed_dict=feed_dict)
 
-      if (step % 200 == 0):
+      if (step % 100 == 0):
         print("Minibatch loss at step %d: %f" % (step, l))
+        print("Working on minibatch")
         print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_labels))
         valid_predictions = session.run(valid_prediction)
+        print("Working on validation set")
         print("Validation accuracy: %.1f%%" % accuracy(valid_predictions, valid_labels))
 
         summary = session.run(merged, feed_dict=feed_dict)
