@@ -10,7 +10,7 @@ import operator
 import tensorflow as tf
 
 # load and format the data
-pickle_file = 'SVHN_multi.pickle'
+pickle_file = 'SVHN_multi_48.pickle'
 
 with open(pickle_file, 'rb') as f:
     save = pickle.load(f)
@@ -26,7 +26,7 @@ with open(pickle_file, 'rb') as f:
     print('Test set', test_dataset.shape, test_labels.shape)
 
 # parameters
-IMAGE_SIZE = 32
+IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
 BATCH_SIZE = 64
 N_HIDDEN_1 = 128
@@ -66,7 +66,7 @@ test_labels = test_labels[:2000]
 # used for validating an architecture
 # on a small dataset, if the model overfits to 100% minibatch or training accuracy,
 # model is about right and hyperparameter tuning is required.
-validate_arch = True
+validate_arch = False
 if validate_arch:
     print("Validating architecture")
     train_dataset = train_dataset[:100, :]
@@ -284,10 +284,10 @@ def accuracy(predictions, labels):
   # labels are not one-hot encoded
   predictions = np.array(map(probs_to_labels, predictions)).T
   labels = labels[:, 0:NUM_LETTERS+1].reshape(predictions.shape)
-  print("\nPredictions")
-  print(predictions)
-  print("\nExpected Labels")
-  print(labels)
+  # print("\nPredictions")
+  # print(predictions)
+  # print("\nExpected Labels")
+  # print(labels)
   return (100.0 * np.sum((np.equal(predictions, labels)).all(axis=1))
           / predictions.shape[0])
 
@@ -329,10 +329,8 @@ with session.as_default():
 
       if (step % 100 == 0):
         print("Minibatch loss at step %d: %f" % (step, l))
-        print("Working on minibatch")
         print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_labels))
         valid_predictions = session.run(valid_prediction)
-        print("Working on validation set")
         print("Validation accuracy: %.1f%%" % accuracy(valid_predictions, valid_labels))
 
         summary = session.run(merged, feed_dict=feed_dict)

@@ -7,7 +7,7 @@ from scipy import misc
 # Typical setup to include TensorFlow.
 import tensorflow as tf
 
-root = 'train'
+root = 'test'
 print "Working on {}".format(root)
 
 num_of_files = len(os.listdir("{}/proc/".format(root)))
@@ -22,7 +22,7 @@ filename_queue = tf.train.string_input_producer(
 image_reader = tf.WholeFileReader()
 
 # image_size - 32x32 images
-IMAGE_SIZE = 32
+IMAGE_SIZE = 48
 
 # Read a whole file from the queue, the first returned value in the tuple is the
 # filename which we are ignoring.
@@ -51,7 +51,7 @@ with tf.Session() as sess:
             # Get an image tensor and print its value.
             image_file, image_tensor = sess.run([filename, resized_image])
             print 'Processing ', image_file
-            misc.imsave('{}/proc/resized/{}'.format(root, os.path.basename(image_file)), image_tensor)
+            misc.imsave('{}/proc/resized/48/{}'.format(root, os.path.basename(image_file)), image_tensor)
 
     except tf.errors.OutOfRangeError:
         print('Done -- epoch limit reached')
