@@ -1,5 +1,5 @@
 #!/bin/sh
 
-python svhn_multi.py >out.txt
+python svhn_multi.py | tee out.txt
 git commit -a -m 'Latest run'
 git push origin master
