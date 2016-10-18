@@ -30,15 +30,18 @@ IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
 BATCH_SIZE = 64
 N_HIDDEN_1 = 128
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.01
 LAMBDA = 0.0001 # regularization rate
 NUM_STEPS = 10000
 NUM_CHANNELS = 1
 # number of letters in the sequence to transcribe
-NUM_LETTERS = 3
-STDDEV = 0.1
+NUM_LETTERS = 2
+STDDEV = 0.08
 RESTORE = False
 MODEL_CKPT = 'model.ckpt'
+CDEPTH1 = 32
+CDEPTH2 = 64
+CDEPTH3 = 128
 
 def reformat(dataset, labels):
     dataset = dataset.reshape(-1, 3, IMAGE_SIZE, IMAGE_SIZE)
@@ -59,8 +62,8 @@ test_dataset, test_labels = reformat(test_dataset, test_labels)
 # on a larger set. We need faster turnaround for now.
 valid_dataset = valid_dataset[:200, :]
 valid_labels = valid_labels[:200]
-test_dataset = test_dataset[:2000, :]
-test_labels = test_labels[:2000]
+test_dataset = test_dataset[:200, :]
+test_labels = test_labels[:200]
 
 # *** SEEME ***:
 # used for validating an architecture
@@ -76,7 +79,8 @@ if validate_arch:
     test_dataset = test_dataset[:10, :]
     test_labels = test_labels[:10]
     BATCH_SIZE = 10
-    NUM_STEPS = 3000
+    NUM_STEPS = 2000
+    LAMBDA = 1e-4
 
 print('Inputs to the model')
 print('Training set', train_dataset.shape, train_labels.shape)
@@ -98,13 +102,14 @@ def variable_summaries(var, name):
 def weight_variable(name, shape, stddev=1.0):
   # name: name of this variable
   # shape: list of shape compatible with tf.Variable call
-  # stddev: 'fanIn' - variables should have std_dev 2/sqrt(fan_in)
-  #         any float - use verbatim
-  if stddev == 'fanIn':
-    fan_in = reduce(operator.mul, shape)
-    stddev = 2.0/math.sqrt(fan_in)
-
-  var = tf.Variable(tf.truncated_normal(shape, stddev=stddev, name=name))
+  fan_in = shape[-2]
+  fan_out = shape[-1]
+  for x in shape[:-2]:
+    fan_in *= x
+    fan_out *= x
+  n = (fan_in + fan_out) / 2.0
+  stddev = math.sqrt(2.0/fan_in)
+  var = tf.Variable(tf.truncated_normal(shape, 0.0, stddev=stddev, name=name))
   # add variable to the summaries for visualization
   variable_summaries(var, name)
   return var
@@ -144,17 +149,17 @@ with tf.name_scope('inputs'):
 # Store layers weight & bias
 # after 2 max pooling operations, the feature maps will have 1/(2*2) of the original spatial dimensions
 weights = {
-  'conv1': weight_variable('conv1/weights', [5, 5, NUM_CHANNELS, 32], stddev=STDDEV), # 5x5 kernel, depth 32
-  'conv2': weight_variable('conv2/weights', [5, 5, 32, 64], stddev=STDDEV), # 5x5 kernel, depth 64
-  'conv3': weight_variable('conv3/weights', [5, 5, 64, 128], stddev=STDDEV), # 5x5 kernel, depth 128
+  'conv1': weight_variable('conv1/weights', [5, 5, NUM_CHANNELS, CDEPTH1], stddev=STDDEV), # 5x5 kernel, depth 32
+  'conv2': weight_variable('conv2/weights', [5, 5, CDEPTH1, CDEPTH2], stddev=STDDEV), # 5x5 kernel, depth 64
+  'conv3': weight_variable('conv3/weights', [5, 5, CDEPTH2, CDEPTH3], stddev=STDDEV), # 5x5 kernel, depth 128
   # for the length of the sequence of digits
-  'fc1': weight_variable('fc1/weights', [IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=STDDEV),
+  'fc1': weight_variable('fc1/weights', [IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * CDEPTH3, N_HIDDEN_1], stddev=STDDEV),
   'out1': weight_variable('out1/weights', [N_HIDDEN_1, 5], stddev=STDDEV), # length of the sequence: here 1-5 - TODO: make it configurable
   }
 
 # for individual digits
 for i in range(2, NUM_LETTERS+2):
-  weights['fc{}'.format(i)] = weight_variable('fc{}/weights'.format(i), [IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * 128, N_HIDDEN_1], stddev=STDDEV)
+  weights['fc{}'.format(i)] = weight_variable('fc{}/weights'.format(i), [IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * CDEPTH3, N_HIDDEN_1], stddev=STDDEV)
   weights['out{}'.format(i)] = weight_variable('out{}/weights'.format(i), [N_HIDDEN_1, NUM_LABELS], stddev=STDDEV)
 
 biases = {
@@ -179,15 +184,16 @@ def setup_conv_net(X, weights, biases, train=False):
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv1')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv1']), name='relu1')
-  #pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
-  #print("Pool1 shape: " + str(pool.get_shape().as_list()))
+  # pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+  # print("Pool1 shape: " + str(pool.get_shape().as_list()))
 
   conv = tf.nn.conv2d(relu,
                       weights['conv2'],
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv2')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv2']), name='relu2')
-  pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool2')
+  norm = tf.nn.local_response_normalization(relu)
+  pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool2')
   print("Pool2 shape: " + str(pool.get_shape().as_list()))
 
   conv = tf.nn.conv2d(pool,
@@ -195,13 +201,9 @@ def setup_conv_net(X, weights, biases, train=False):
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv3')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv3']), name='relu3')
-  pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool3')
+  norm = tf.nn.local_response_normalization(relu)
+  pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool3')
   print("Pool3 shape: " + str(pool.get_shape().as_list()))
-
-  # introduce a dropout with probability 0.5 only for training
-  # to avoid overfitting.
-  if train:
-    pool = tf.nn.dropout(pool, 0.8)
 
   # reshape the resulting cuboid to feed to the
   # downstream fully connected layers
@@ -211,6 +213,12 @@ def setup_conv_net(X, weights, biases, train=False):
 
   logitss = []
   hidden = tf.nn.relu(tf.matmul(reshape, weights['fc1']) + biases['fc1'], name='fc1')
+
+  # introduce a dropout with probability 0.5 only for training
+  # to avoid overfitting.
+  if train:
+    hidden = tf.nn.dropout(hidden, 0.5)
+
   logits = tf.matmul(hidden, weights['out1']) + biases['out1']
   logitss.append(logits)
 
