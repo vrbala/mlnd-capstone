@@ -28,9 +28,9 @@ with open(pickle_file, 'rb') as f:
 # parameters
 IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 N_HIDDEN_1 = 128
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.0005
 LAMBDA = 0.0001 # regularization rate
 NUM_STEPS = 10000
 NUM_CHANNELS = 1
@@ -60,8 +60,8 @@ test_dataset, test_labels = reformat(test_dataset, test_labels)
 # use a small set for validation and test for now
 # as the system needs tons of RAM to do convolutions
 # on a larger set. We need faster turnaround for now.
-valid_dataset = valid_dataset[:200, :]
-valid_labels = valid_labels[:200]
+valid_dataset = valid_dataset[:20, :]
+valid_labels = valid_labels[:20]
 test_dataset = test_dataset[:200, :]
 test_labels = test_labels[:200]
 
@@ -117,7 +117,7 @@ def weight_variable(name, shape, stddev=1.0):
 def bias_variable(name, shape):
   # name: name of the variable
   # shape: list representing shape of Tensor. compatible with tf shape
-  var = tf.constant(1.0, shape=shape)
+  var = tf.constant(0.01, shape=shape)
   var = tf.Variable(var)
   variable_summaries(var, name)
   return var
@@ -335,7 +335,7 @@ with session.as_default():
       _, l, predictions = session.run(
         [optimizer, loss, train_prediction], feed_dict=feed_dict)
 
-      if (step % 100 == 0):
+      if (step % 10 == 0):
         print("Minibatch loss at step %d: %f" % (step, l))
         print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_labels))
         valid_predictions = session.run(valid_prediction)
