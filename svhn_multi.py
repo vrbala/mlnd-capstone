@@ -30,18 +30,18 @@ IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
 BATCH_SIZE = 32
 N_HIDDEN_1 = 128
-LEARNING_RATE = 0.0005
+LEARNING_RATE = 0.0005 # 0.0005
 LAMBDA = 0.0001 # regularization rate
-NUM_STEPS = 10000
+NUM_STEPS = 30000
 NUM_CHANNELS = 1
-# number of letters in the sequence to transcribe
-NUM_LETTERS = 2
+NUM_LETTERS = 2 # number of letters in the sequence to transcribe
 STDDEV = 0.08
 RESTORE = False
-MODEL_CKPT = 'model.ckpt'
+MODEL_CKPT = 'model.ckpt' # checkpoint file
 CDEPTH1 = 32
 CDEPTH2 = 64
 CDEPTH3 = 128
+LOG_DIR = 'logs' # where to write summary logs
 
 def reformat(dataset, labels):
     dataset = dataset.reshape(-1, 3, IMAGE_SIZE, IMAGE_SIZE)
@@ -49,6 +49,7 @@ def reformat(dataset, labels):
     dataset = dataset.reshape((-1, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS)).astype(np.float32)
     # Map 0 to [1.0, 0.0, 0.0 ...], 1 to [0.0, 1.0, 0.0 ...]
     # labels = (np.arange(1,11) == labels[:,None]).astype(np.float32)
+    labels = labels[:, 0:NUM_LETTERS+1]
     return dataset, labels
 
 print("After reformatting ... ")
@@ -67,7 +68,7 @@ test_labels = test_labels[:200]
 
 # *** SEEME ***:
 # used for validating an architecture
-# on a small dataset, if the model overfits to 100% minibatch or training accuracy,
+# on a very small dataset, if the model overfits to 100% minibatch or training accuracy,
 # model is about right and hyperparameter tuning is required.
 validate_arch = False
 if validate_arch:
@@ -79,8 +80,11 @@ if validate_arch:
     test_dataset = test_dataset[:10, :]
     test_labels = test_labels[:10]
     BATCH_SIZE = 10
-    NUM_STEPS = 2000
+    NUM_STEPS = 500
     LAMBDA = 1e-4
+    MODEL_CKPT = 'model_valid.ckpt'
+    LOG_DIR = 'valid_logs'
+    RESTORE = False # never restore for validation
 
 print('Inputs to the model')
 print('Training set', train_dataset.shape, train_labels.shape)
@@ -107,7 +111,7 @@ def weight_variable(name, shape, stddev=1.0):
   for x in shape[:-2]:
     fan_in *= x
     fan_out *= x
-  n = (fan_in + fan_out) / 2.0
+
   stddev = math.sqrt(2.0/fan_in)
   var = tf.Variable(tf.truncated_normal(shape, 0.0, stddev=stddev, name=name))
   # add variable to the summaries for visualization
@@ -122,16 +126,34 @@ def bias_variable(name, shape):
   variable_summaries(var, name)
   return var
 
-def probs_to_labels(probs):
-    # input: 2-D array of probabilities (result of softmax)
-    # output: a list of labels of size probs.shape[0]
-   return [np.argmax(x) for x in probs]
-
 def logitss_to_probs(logitss):
     # input: a list of logits
     # output: a 2-D array of softmax operations (they have to be eval'ed in tf session)
     # just applies softmax on each of the logits
     return map(tf.nn.softmax, logitss)
+
+def tf_accuracy(predictions, tf_labels):
+  # predictions is a list of logits for each classifier.
+
+  # add an argmax op for each classifier
+  xs = [tf.argmax(p, 1) for p in predictions]
+
+  # pack the results
+  pred_labels = tf.pack(xs, axis=1)
+
+  # convert 2-D array of booleans to vector of bools
+  # we say that an example is correctly classified only when all labels are correct
+  results = tf.reduce_all(tf.equal(pred_labels, tf_labels), 1)
+
+  # total number of correct predictions
+  num_correct_preds = tf.reduce_sum(tf.cast(results, tf.int32))
+
+  num_predictions = results.get_shape().as_list()[0]
+  hundred = tf.constant(100.0, dtype=tf.float64)
+  accuracy = tf.mul(hundred, tf.truediv(num_correct_preds, num_predictions))
+
+  return accuracy
+
 
 # Input data. For the training data, we use a placeholder that will be fed
 # at run time with a training minibatch.
@@ -140,7 +162,7 @@ with tf.name_scope('inputs'):
                                   shape=(BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS))
   tf.image_summary('input', tf_train_dataset, max_images=10)
   # 6 here is 1 digit for length of sequence and 5 for digits themselves
-  tf_train_labels = tf.placeholder(tf.int32, shape=(BATCH_SIZE, 6))
+  tf_train_labels = tf.placeholder(tf.int64, shape=(BATCH_SIZE, NUM_LETTERS+1))
   tf_valid_dataset = tf.constant(valid_dataset)
   tf.image_summary('validation', tf_valid_dataset, max_images=10)
   tf_test_dataset = tf.constant(test_dataset)
@@ -267,42 +289,42 @@ for i in range(2, NUM_LETTERS+2):
 tf.scalar_summary('loss', loss)
 
 # Optimizer
-optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
+global_step = tf.Variable(0, trainable=False)
+learning_rate = tf.train.exponential_decay(LEARNING_RATE, global_step,
+                                           1000, 0.96, staircase=True)
+# Passing global_step to minimize() will increment it at each step.
+optimizer = tf.train.AdamOptimizer(learning_rate).minimize(loss, global_step=global_step)
+
+tf.scalar_summary('learning rate', learning_rate)
 
 # Predictions for the training, validation data
 train_prediction = logitss_to_probs(logitss)
+train_accuracy = tf_accuracy(train_prediction, tf_train_labels)
+tf.scalar_summary('training accuracy', train_accuracy)
+
 valid_logitss = setup_conv_net(tf_valid_dataset, weights, biases)
 valid_prediction = logitss_to_probs(valid_logitss)
+tf_valid_labels = tf.constant(valid_labels, dtype=tf.int64)
+valid_accuracy = tf_accuracy(valid_prediction, tf_valid_labels)
+tf.scalar_summary('validation accuracy', valid_accuracy)
 
 # Test data predictions
 test_logitss = setup_conv_net(tf_test_dataset, weights, biases)
 test_prediction = logitss_to_probs(test_logitss)
+tf_test_labels = tf.constant(test_labels, dtype=tf.int64)
+test_accuracy = tf_accuracy(test_prediction, tf_test_labels)
 
 # setup validation loss
-tf_valid_labels = tf.constant(valid_labels, dtype=tf.int32)
 vloss =  tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(valid_logitss[0], tf_valid_labels[:, 0]))
 for i in range(2, NUM_LETTERS+2):
   vloss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(valid_logitss[i-1], tf_valid_labels[:, i-1]))
 
 tf.scalar_summary('validation loss', vloss)
 
-
-def accuracy(predictions, labels):
-  # predictions is 2-D array of probabilities
-  # labels are not one-hot encoded
-  predictions = np.array(map(probs_to_labels, predictions)).T
-  labels = labels[:, 0:NUM_LETTERS+1].reshape(predictions.shape)
-  # print("\nPredictions")
-  # print(predictions)
-  # print("\nExpected Labels")
-  # print(labels)
-  return (100.0 * np.sum((np.equal(predictions, labels)).all(axis=1))
-          / predictions.shape[0])
-
 # Merge all the summaries and write them out to ./logs
 session = tf.Session()
 merged = tf.merge_all_summaries()
-train_writer = tf.train.SummaryWriter('logs' + '/train',
+train_writer = tf.train.SummaryWriter(LOG_DIR + '/train',
                                       session.graph)
 
 init = tf.initialize_all_variables()
@@ -327,7 +349,7 @@ with session.as_default():
       offset = (step * BATCH_SIZE) % (train_labels.shape[0] - BATCH_SIZE)
       # Generate a minibatch.
       batch_data = train_dataset[offset:(offset + BATCH_SIZE), :]
-      batch_labels = train_labels[offset:(offset + BATCH_SIZE), :]
+      batch_labels = train_labels[offset:(offset + BATCH_SIZE), 0:NUM_LETTERS+1]
       # Prepare a dictionary telling the session where to feed the minibatch.
       # The key of the dictionary is the placeholder node of the graph to be fed,
       # and the value is the numpy array to feed to it.
@@ -335,11 +357,12 @@ with session.as_default():
       _, l, predictions = session.run(
         [optimizer, loss, train_prediction], feed_dict=feed_dict)
 
-      if (step % 10 == 0):
+      if (step % 100 == 0):
         print("Minibatch loss at step %d: %f" % (step, l))
-        print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_labels))
-        valid_predictions = session.run(valid_prediction)
-        print("Validation accuracy: %.1f%%" % accuracy(valid_predictions, valid_labels))
+        train_acc = session.run(train_accuracy, feed_dict=feed_dict)
+        print("Minibatch accuracy: %.1f%%" % train_acc)
+        val_acc = session.run(valid_accuracy)
+        print("Validation accuracy: %.1f%%" % val_acc)
 
         summary = session.run(merged, feed_dict=feed_dict)
         train_writer.add_summary(summary, step)
@@ -349,7 +372,7 @@ with session.as_default():
     print("Model saved in {}".format(saved_in))
 
   # predict the test labels
-  test_predictions = session.run(test_prediction)
-  print("Test accuracy: %.1f%%" % accuracy(test_predictions, test_labels))
+  test_acc = session.run(test_accuracy)
+  print("Test accuracy: %.1f%%" % test_acc)
 
 train_writer.close()
