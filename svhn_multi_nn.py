@@ -28,16 +28,16 @@ with open(pickle_file, 'rb') as f:
 # parameters
 IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
-BATCH_SIZE = 64
-N_HIDDEN_1 = 128
+BATCH_SIZE = 128
+N_HIDDEN_1 = 64 
 LEARNING_RATE = 0.001
 LAMBDA = 0.00001 # regularization rate
 NUM_STEPS = 5000
 NUM_CHANNELS = 1
 # number of letters in the sequence to transcribe
 NUM_LETTERS = 3
-STDDEV = 0.1
-RESTORE = True
+STDDEV = 'fanIn' 
+RESTORE = False
 MODEL_CKPT = 'model_nn.ckpt'
 
 def reformat(dataset, labels):
@@ -52,15 +52,6 @@ print("After reformatting ... ")
 train_dataset, train_labels = reformat(train_dataset, train_labels)
 valid_dataset, valid_labels = reformat(valid_dataset, valid_labels)
 test_dataset, test_labels = reformat(test_dataset, test_labels)
-
-# *** SEEME ***:
-# use a small set for validation and test for now
-# as the system needs tons of RAM to do convolutions
-# on a larger set. We need faster turnaround for now.
-valid_dataset = valid_dataset[:200, :]
-valid_labels = valid_labels[:200]
-test_dataset = test_dataset[:2000, :]
-test_labels = test_labels[:2000]
 
 # *** SEEME ***:
 # used for validating an architecture
@@ -101,8 +92,7 @@ def weight_variable(name, shape, stddev=1.0):
   # stddev: 'fanIn' - variables should have std_dev 2/sqrt(fan_in)
   #         any float - use verbatim
   if stddev == 'fanIn':
-    fan_in = reduce(operator.mul, shape)
-    stddev = 2.0/math.sqrt(fan_in)
+    stddev = math.sqrt(2.0/shape[0])
 
   var = tf.Variable(tf.truncated_normal(shape, stddev=stddev, name=name))
   # add variable to the summaries for visualization
@@ -112,7 +102,7 @@ def weight_variable(name, shape, stddev=1.0):
 def bias_variable(name, shape):
   # name: name of the variable
   # shape: list representing shape of Tensor. compatible with tf shape
-  var = tf.constant(1.0, shape=shape)
+  var = tf.constant(0.1, shape=shape)
   var = tf.Variable(var)
   variable_summaries(var, name)
   return var

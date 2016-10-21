@@ -32,15 +32,15 @@ BATCH_SIZE = 64
 N_HIDDEN_1 = 64
 LEARNING_RATE = 0.0005 # 0.0005
 LAMBDA = 0.0001 # regularization rate
-NUM_STEPS = 30000
+NUM_STEPS = 100000
 NUM_CHANNELS = 1
-NUM_LETTERS = 2 # number of letters in the sequence to transcribe
+NUM_DIGITS = 3 # number of letters in the sequence to transcribe
 STDDEV = 0.08
 RESTORE = False
 MODEL_CKPT = 'model.ckpt' # checkpoint file
-CDEPTH1 = 16
-CDEPTH2 = 32
-CDEPTH3 = 64
+CDEPTH1 = 8
+CDEPTH2 = 16
+CDEPTH3 = 32
 LOG_DIR = 'logs' # where to write summary logs
 
 def reformat(dataset, labels):
@@ -49,7 +49,7 @@ def reformat(dataset, labels):
     dataset = dataset.reshape((-1, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS)).astype(np.float32)
     # Map 0 to [1.0, 0.0, 0.0 ...], 1 to [0.0, 1.0, 0.0 ...]
     # labels = (np.arange(1,11) == labels[:,None]).astype(np.float32)
-    labels = labels[:, 0:NUM_LETTERS+1]
+    labels = labels[:, 0:NUM_DIGITS+1]
     return dataset, labels
 
 print("After reformatting ... ")
@@ -158,7 +158,7 @@ with tf.name_scope('inputs'):
                                   shape=(BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS))
   tf.image_summary('input', tf_train_dataset, max_images=10)
   # 6 here is 1 digit for length of sequence and 5 for digits themselves
-  tf_train_labels = tf.placeholder(tf.int64, shape=(BATCH_SIZE, NUM_LETTERS+1))
+  tf_train_labels = tf.placeholder(tf.int64, shape=(BATCH_SIZE, NUM_DIGITS+1))
   tf_valid_dataset = tf.constant(valid_dataset)
   tf.image_summary('validation', tf_valid_dataset, max_images=10)
   tf_test_dataset = tf.constant(test_dataset)
@@ -176,7 +176,7 @@ weights = {
   }
 
 # for individual digits
-for i in range(2, NUM_LETTERS+2):
+for i in range(2, NUM_DIGITS+2):
   weights['fc{}'.format(i)] = weight_variable('fc{}/weights'.format(i), [IMAGE_SIZE // 8 * IMAGE_SIZE // 8 * CDEPTH3, N_HIDDEN_1], stddev=STDDEV)
   weights['out{}'.format(i)] = weight_variable('out{}/weights'.format(i), [N_HIDDEN_1, NUM_LABELS], stddev=STDDEV)
 
@@ -190,7 +190,7 @@ biases = {
   }
 
 # for individual digits
-for i in range(2, NUM_LETTERS+2):
+for i in range(2, NUM_DIGITS+2):
   biases['fc{}'.format(i)] = bias_variable('fc{}/bias'.format(i), [N_HIDDEN_1])
   biases['out{}'.format(i)] = bias_variable('out{}/bias'.format(i), [NUM_LABELS])
 
@@ -202,7 +202,10 @@ def setup_conv_net(X, weights, biases, train=False):
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv1')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv1']), name='relu1')
-  pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+  norm = tf.nn.local_response_normalization(relu)
+  pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+  if train:
+    pool = tf.nn.dropout(pool, 0.9)
   print("Pool1 shape: " + str(pool.get_shape().as_list()))
 
   conv = tf.nn.conv2d(pool,
@@ -212,6 +215,8 @@ def setup_conv_net(X, weights, biases, train=False):
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv2']), name='relu2')
   norm = tf.nn.local_response_normalization(relu)
   pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool2')
+  if train:
+    pool = tf.nn.dropout(pool, 0.8)
   print("Pool2 shape: " + str(pool.get_shape().as_list()))
 
   conv = tf.nn.conv2d(pool,
@@ -221,6 +226,8 @@ def setup_conv_net(X, weights, biases, train=False):
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv3']), name='relu3')
   norm = tf.nn.local_response_normalization(relu)
   pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool3')
+  if train:
+    pool = tf.nn.dropout(pool, 0.7)
   print("Pool3 shape: " + str(pool.get_shape().as_list()))
 
   # reshape the resulting cuboid to feed to the
@@ -240,7 +247,7 @@ def setup_conv_net(X, weights, biases, train=False):
   logits = tf.matmul(hidden, weights['out1']) + biases['out1']
   logitss.append(logits)
 
-  for i in range(2, NUM_LETTERS+2):
+  for i in range(2, NUM_DIGITS+2):
     fc = 'fc{}'.format(i)
     out = 'out{}'.format(i)
     hidden = tf.nn.relu(tf.matmul(reshape, weights[fc]) + biases[fc], name=fc)
@@ -260,7 +267,7 @@ loss =  tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[0]
 # debugging op --
 to_print = []
 to_print.append(logitss[0])
-for i in range(2, NUM_LETTERS+2):
+for i in range(2, NUM_DIGITS+2):
   loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[i-1], tf_train_labels[:, i-1]))
   to_print.append(logitss[i-1])
 
@@ -277,7 +284,7 @@ loss += LAMBDA * tf.nn.l2_loss(weights['out1'])
 loss += LAMBDA * tf.nn.l2_loss(biases['fc1'])
 loss += LAMBDA * tf.nn.l2_loss(biases['out1'])
 
-for i in range(2, NUM_LETTERS+2):
+for i in range(2, NUM_DIGITS+2):
   loss += LAMBDA * tf.nn.l2_loss(weights['fc{}'.format(i)])
   loss += LAMBDA * tf.nn.l2_loss(weights['out{}'.format(i)])
   loss += LAMBDA * tf.nn.l2_loss(biases['fc{}'.format(i)])
@@ -289,7 +296,7 @@ tf.scalar_summary('training loss', loss)
 # Optimizer
 global_step = tf.Variable(0, trainable=False)
 learning_rate = tf.train.exponential_decay(LEARNING_RATE, global_step,
-                                           1000, 0.96, staircase=True)
+                                           10000, 0.96, staircase=True)
 # Passing global_step to minimize() will increment it at each step.
 optimizer = tf.train.AdamOptimizer(learning_rate).minimize(loss, global_step=global_step)
 
@@ -314,7 +321,7 @@ test_accuracy = tf_accuracy(test_prediction, tf_test_labels)
 
 # setup validation loss
 vloss =  tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(valid_logitss[0], tf_valid_labels[:, 0]))
-for i in range(2, NUM_LETTERS+2):
+for i in range(2, NUM_DIGITS+2):
   vloss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(valid_logitss[i-1], tf_valid_labels[:, i-1]))
 
 tf.scalar_summary('validation loss', vloss)
@@ -347,7 +354,7 @@ with session.as_default():
       offset = (step * BATCH_SIZE) % (train_labels.shape[0] - BATCH_SIZE)
       # Generate a minibatch.
       batch_data = train_dataset[offset:(offset + BATCH_SIZE), :]
-      batch_labels = train_labels[offset:(offset + BATCH_SIZE), 0:NUM_LETTERS+1]
+      batch_labels = train_labels[offset:(offset + BATCH_SIZE), 0:NUM_DIGITS+1]
       # Prepare a dictionary telling the session where to feed the minibatch.
       # The key of the dictionary is the placeholder node of the graph to be fed,
       # and the value is the numpy array to feed to it.
