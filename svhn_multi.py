@@ -28,8 +28,8 @@ with open(pickle_file, 'rb') as f:
 # parameters
 IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
-BATCH_SIZE = 32
-N_HIDDEN_1 = 128
+BATCH_SIZE = 64
+N_HIDDEN_1 = 64
 LEARNING_RATE = 0.0005 # 0.0005
 LAMBDA = 0.0001 # regularization rate
 NUM_STEPS = 30000
@@ -38,9 +38,9 @@ NUM_LETTERS = 2 # number of letters in the sequence to transcribe
 STDDEV = 0.08
 RESTORE = False
 MODEL_CKPT = 'model.ckpt' # checkpoint file
-CDEPTH1 = 32
-CDEPTH2 = 64
-CDEPTH3 = 128
+CDEPTH1 = 16
+CDEPTH2 = 32
+CDEPTH3 = 64
 LOG_DIR = 'logs' # where to write summary logs
 
 def reformat(dataset, labels):
@@ -145,12 +145,8 @@ def tf_accuracy(predictions, tf_labels):
   # we say that an example is correctly classified only when all labels are correct
   results = tf.reduce_all(tf.equal(pred_labels, tf_labels), 1)
 
-  # total number of correct predictions
-  num_correct_preds = tf.reduce_sum(tf.cast(results, tf.int32))
-
-  num_predictions = results.get_shape().as_list()[0]
-  hundred = tf.constant(100.0, dtype=tf.float64)
-  accuracy = tf.mul(hundred, tf.truediv(num_correct_preds, num_predictions))
+  # accuracy is the number of correct predictions to total number of predictions
+  accuracy = 100 * tf.reduce_mean(tf.cast(results, tf.float32))
 
   return accuracy
 
@@ -171,23 +167,23 @@ with tf.name_scope('inputs'):
 # Store layers weight & bias
 # after 2 max pooling operations, the feature maps will have 1/(2*2) of the original spatial dimensions
 weights = {
-  'conv1': weight_variable('conv1/weights', [5, 5, NUM_CHANNELS, CDEPTH1], stddev=STDDEV), # 5x5 kernel, depth 32
-  'conv2': weight_variable('conv2/weights', [5, 5, CDEPTH1, CDEPTH2], stddev=STDDEV), # 5x5 kernel, depth 64
-  'conv3': weight_variable('conv3/weights', [5, 5, CDEPTH2, CDEPTH3], stddev=STDDEV), # 5x5 kernel, depth 128
+  'conv1': weight_variable('conv1/weights', [5, 5, NUM_CHANNELS, CDEPTH1], stddev=STDDEV), # 5x5 kernel, depth CDEPTH1
+  'conv2': weight_variable('conv2/weights', [5, 5, CDEPTH1, CDEPTH2], stddev=STDDEV), # 5x5 kernel, depth CDEPTH2
+  'conv3': weight_variable('conv3/weights', [5, 5, CDEPTH2, CDEPTH3], stddev=STDDEV), # 5x5 kernel, depth CDEPTH3
   # for the length of the sequence of digits
-  'fc1': weight_variable('fc1/weights', [IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * CDEPTH3, N_HIDDEN_1], stddev=STDDEV),
+  'fc1': weight_variable('fc1/weights', [IMAGE_SIZE // 8 * IMAGE_SIZE // 8 * CDEPTH3, N_HIDDEN_1], stddev=STDDEV),
   'out1': weight_variable('out1/weights', [N_HIDDEN_1, 5], stddev=STDDEV), # length of the sequence: here 1-5 - TODO: make it configurable
   }
 
 # for individual digits
 for i in range(2, NUM_LETTERS+2):
-  weights['fc{}'.format(i)] = weight_variable('fc{}/weights'.format(i), [IMAGE_SIZE // 4 * IMAGE_SIZE // 4 * CDEPTH3, N_HIDDEN_1], stddev=STDDEV)
+  weights['fc{}'.format(i)] = weight_variable('fc{}/weights'.format(i), [IMAGE_SIZE // 8 * IMAGE_SIZE // 8 * CDEPTH3, N_HIDDEN_1], stddev=STDDEV)
   weights['out{}'.format(i)] = weight_variable('out{}/weights'.format(i), [N_HIDDEN_1, NUM_LABELS], stddev=STDDEV)
 
 biases = {
-  'conv1': bias_variable('conv1/bias', [32]),
-  'conv2': bias_variable('conv2/bias', [64]),
-  'conv3': bias_variable('conv3/bias', [128]),
+  'conv1': bias_variable('conv1/bias', [CDEPTH1]),
+  'conv2': bias_variable('conv2/bias', [CDEPTH2]),
+  'conv3': bias_variable('conv3/bias', [CDEPTH3]),
   # for the length of sequence: here 1-5
   'fc1': bias_variable('fc1/bias', [N_HIDDEN_1]),
   'out1': bias_variable('out1/bias', [5]),
@@ -206,10 +202,10 @@ def setup_conv_net(X, weights, biases, train=False):
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv1')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv1']), name='relu1')
-  # pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
-  # print("Pool1 shape: " + str(pool.get_shape().as_list()))
+  pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+  print("Pool1 shape: " + str(pool.get_shape().as_list()))
 
-  conv = tf.nn.conv2d(relu,
+  conv = tf.nn.conv2d(pool,
                       weights['conv2'],
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv2')
@@ -248,6 +244,8 @@ def setup_conv_net(X, weights, biases, train=False):
     fc = 'fc{}'.format(i)
     out = 'out{}'.format(i)
     hidden = tf.nn.relu(tf.matmul(reshape, weights[fc]) + biases[fc], name=fc)
+    if train:
+      hidden = tf.nn.dropout(hidden, 0.5)
     logits = tf.matmul(hidden, weights[out]) + biases[out]
     # logits = tf.Print(logits, [weights[fc], biases[fc], weights[out], biases[out]],
     #                   "weights and biases (fc and out) for digit {}".format(i), summarize=10)
@@ -286,7 +284,7 @@ for i in range(2, NUM_LETTERS+2):
   loss += LAMBDA * tf.nn.l2_loss(biases['out{}'.format(i)])
 
 # add a summary for loss
-tf.scalar_summary('loss', loss)
+tf.scalar_summary('training loss', loss)
 
 # Optimizer
 global_step = tf.Variable(0, trainable=False)
@@ -357,7 +355,7 @@ with session.as_default():
       _, l, predictions = session.run(
         [optimizer, loss, train_prediction], feed_dict=feed_dict)
 
-      if (step % 100 == 0):
+      if (step % 10 == 0): # important to do this in closer steps to get a better feel of the loss value
         print("Minibatch loss at step %d: %f" % (step, l))
         train_acc = session.run(train_accuracy, feed_dict=feed_dict)
         print("Minibatch accuracy: %.1f%%" % train_acc)
