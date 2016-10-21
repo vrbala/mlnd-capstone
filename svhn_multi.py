@@ -38,9 +38,9 @@ NUM_DIGITS = 3 # number of letters in the sequence to transcribe
 STDDEV = 0.08
 RESTORE = False
 MODEL_CKPT = 'model.ckpt' # checkpoint file
-CDEPTH1 = 8
-CDEPTH2 = 16
-CDEPTH3 = 32
+CDEPTH1 = 16 
+CDEPTH2 = 32
+CDEPTH3 = 64
 LOG_DIR = 'logs' # where to write summary logs
 
 def reformat(dataset, labels):
