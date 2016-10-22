@@ -3,6 +3,7 @@
 # Lot of the code here is from tensorflow examples
 
 import sys
+import os
 import math
 import cPickle as pickle
 import numpy as np
@@ -38,10 +39,10 @@ NUM_DIGITS = 3 # number of letters in the sequence to transcribe
 STDDEV = 0.08
 RESTORE = False
 MODEL_CKPT = 'model.ckpt' # checkpoint file
-CDEPTH1 = 16 
+CDEPTH1 = 16
 CDEPTH2 = 32
 CDEPTH3 = 64
-LOG_DIR = 'logs' # where to write summary logs
+LOG_DIR = 'logs.{}'.format(os.getpid()) # where to write summary logs
 
 def reformat(dataset, labels):
     dataset = dataset.reshape(-1, 3, IMAGE_SIZE, IMAGE_SIZE)
@@ -61,8 +62,8 @@ test_dataset, test_labels = reformat(test_dataset, test_labels)
 # use a small set for validation and test for now
 # as the system needs tons of RAM to do convolutions
 # on a larger set. We need faster turnaround for now.
-valid_dataset = valid_dataset[:20, :]
-valid_labels = valid_labels[:20]
+valid_dataset = valid_dataset[:200, :]
+valid_labels = valid_labels[:200]
 test_dataset = test_dataset[:200, :]
 test_labels = test_labels[:200]
 
@@ -204,8 +205,6 @@ def setup_conv_net(X, weights, biases, train=False):
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv1']), name='relu1')
   norm = tf.nn.local_response_normalization(relu)
   pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
-  if train:
-    pool = tf.nn.dropout(pool, 0.9)
   print("Pool1 shape: " + str(pool.get_shape().as_list()))
 
   conv = tf.nn.conv2d(pool,
@@ -215,8 +214,6 @@ def setup_conv_net(X, weights, biases, train=False):
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv2']), name='relu2')
   norm = tf.nn.local_response_normalization(relu)
   pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool2')
-  if train:
-    pool = tf.nn.dropout(pool, 0.8)
   print("Pool2 shape: " + str(pool.get_shape().as_list()))
 
   conv = tf.nn.conv2d(pool,
@@ -227,7 +224,7 @@ def setup_conv_net(X, weights, biases, train=False):
   norm = tf.nn.local_response_normalization(relu)
   pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool3')
   if train:
-    pool = tf.nn.dropout(pool, 0.7)
+    pool = tf.nn.dropout(pool, 0.9)
   print("Pool3 shape: " + str(pool.get_shape().as_list()))
 
   # reshape the resulting cuboid to feed to the
@@ -294,13 +291,9 @@ for i in range(2, NUM_DIGITS+2):
 tf.scalar_summary('training loss', loss)
 
 # Optimizer
-global_step = tf.Variable(0, trainable=False)
-learning_rate = tf.train.exponential_decay(LEARNING_RATE, global_step,
-                                           10000, 0.96, staircase=True)
-# Passing global_step to minimize() will increment it at each step.
-optimizer = tf.train.AdamOptimizer(learning_rate).minimize(loss, global_step=global_step)
+optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
 
-tf.scalar_summary('learning rate', learning_rate)
+tf.scalar_summary('learning rate', LEARNING_RATE)
 
 # Predictions for the training, validation data
 train_prediction = logitss_to_probs(logitss)
