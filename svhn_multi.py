@@ -30,12 +30,11 @@ with open(pickle_file, 'rb') as f:
 IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
 BATCH_SIZE = 64
-N_HIDDEN_1 = 128
 LEARNING_RATE = 0.00005
 LAMBDA = 0.0 # regularization rate
 NUM_STEPS = 100000
-NUM_CHANNELS = 1
-NUM_DIGITS = 3 # number of letters in the sequence to transcribe
+NUM_CHANNELS = 3
+NUM_DIGITS = 5 # number of letters in the sequence to transcribe
 STDDEV = 0.08
 RESTORE = False
 MODEL_CKPT = 'model.ckpt' # checkpoint file
@@ -43,11 +42,12 @@ CDEPTH1 = 16
 CDEPTH2 = 32
 CDEPTH3 = 64
 LOG_DIR = 'logs.{}'.format(os.getpid()) # where to write summary logs
+N_HIDDEN_1 = (IMAGE_SIZE // 4) * (IMAGE_SIZE // 4) * CDEPTH3 # 4 => 2^2 (2 = number of pooling layers)
 
 def reformat(dataset, labels):
-    dataset = dataset.reshape(-1, 3, IMAGE_SIZE, IMAGE_SIZE)
-    dataset = dataset.mean(axis=1) # convert to grayscale
-    dataset = dataset.reshape((-1, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS)).astype(np.float32)
+    #    dataset = dataset.reshape(-1, 3, IMAGE_SIZE, IMAGE_SIZE)
+    # dataset = dataset.mean(axis=1) # convert to grayscale
+    # dataset = dataset.reshape((-1, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS)).astype(np.float32)
     # Map 0 to [1.0, 0.0, 0.0 ...], 1 to [0.0, 1.0, 0.0 ...]
     # labels = (np.arange(1,11) == labels[:,None]).astype(np.float32)
     labels = labels[:, 0:NUM_DIGITS+1]
@@ -81,8 +81,8 @@ if validate_arch:
     test_dataset = test_dataset[:10, :]
     test_labels = test_labels[:10]
     BATCH_SIZE = 10
-    NUM_STEPS = 500
-    LAMBDA = 1e-4
+    NUM_STEPS = 5000
+    LAMBDA = 0.0
     MODEL_CKPT = 'model_valid.ckpt'
     LOG_DIR = 'valid_logs'
     RESTORE = False # never restore for validation
@@ -172,13 +172,11 @@ weights = {
   'conv2': weight_variable('conv2/weights', [5, 5, CDEPTH1, CDEPTH2], stddev=STDDEV), # 5x5 kernel, depth CDEPTH2
   'conv3': weight_variable('conv3/weights', [5, 5, CDEPTH2, CDEPTH3], stddev=STDDEV), # 5x5 kernel, depth CDEPTH3
   # for the length of the sequence of digits
-  'fc1': weight_variable('fc1/weights', [IMAGE_SIZE // 8 * IMAGE_SIZE // 8 * CDEPTH3, N_HIDDEN_1], stddev=STDDEV),
   'out1': weight_variable('out1/weights', [N_HIDDEN_1, 5], stddev=STDDEV), # length of the sequence: here 1-5 - TODO: make it configurable
   }
 
 # for individual digits
 for i in range(2, NUM_DIGITS+2):
-  weights['fc{}'.format(i)] = weight_variable('fc{}/weights'.format(i), [IMAGE_SIZE // 8 * IMAGE_SIZE // 8 * CDEPTH3, N_HIDDEN_1], stddev=STDDEV)
   weights['out{}'.format(i)] = weight_variable('out{}/weights'.format(i), [N_HIDDEN_1, NUM_LABELS], stddev=STDDEV)
 
 biases = {
@@ -186,13 +184,11 @@ biases = {
   'conv2': bias_variable('conv2/bias', [CDEPTH2]),
   'conv3': bias_variable('conv3/bias', [CDEPTH3]),
   # for the length of sequence: here 1-5
-  'fc1': bias_variable('fc1/bias', [N_HIDDEN_1]),
   'out1': bias_variable('out1/bias', [5]),
   }
 
 # for individual digits
 for i in range(2, NUM_DIGITS+2):
-  biases['fc{}'.format(i)] = bias_variable('fc{}/bias'.format(i), [N_HIDDEN_1])
   biases['out{}'.format(i)] = bias_variable('out{}/bias'.format(i), [NUM_LABELS])
 
 def setup_conv_net(X, weights, biases, train=False):
@@ -203,8 +199,7 @@ def setup_conv_net(X, weights, biases, train=False):
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv1')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv1']), name='relu1')
-  norm = tf.nn.local_response_normalization(relu)
-  pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+  pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
   print("Pool1 shape: " + str(pool.get_shape().as_list()))
 
   conv = tf.nn.conv2d(pool,
@@ -212,8 +207,7 @@ def setup_conv_net(X, weights, biases, train=False):
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv2')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv2']), name='relu2')
-  norm = tf.nn.local_response_normalization(relu)
-  pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool2')
+  pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool2')
   print("Pool2 shape: " + str(pool.get_shape().as_list()))
 
   conv = tf.nn.conv2d(pool,
@@ -221,38 +215,23 @@ def setup_conv_net(X, weights, biases, train=False):
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv3')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv3']), name='relu3')
-  norm = tf.nn.local_response_normalization(relu)
-  pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool3')
-  if False:
-    pool = tf.nn.dropout(pool, 0.8)
-  print("Pool3 shape: " + str(pool.get_shape().as_list()))
+  if train:
+    relu = tf.nn.dropout(relu, 0.8)
+  print("Pool3 shape: " + str(relu.get_shape().as_list()))
 
   # reshape the resulting cuboid to feed to the
   # downstream fully connected layers
-  shape = pool.get_shape().as_list()
-  reshape = tf.reshape(pool,
+  shape = relu.get_shape().as_list()
+  reshape = tf.reshape(relu,
                        [shape[0], shape[1] * shape[2] * shape[3]])
 
   logitss = []
-  hidden = tf.nn.relu(tf.matmul(reshape, weights['fc1']) + biases['fc1'], name='fc1')
-
-  # introduce a dropout with probability 0.5 only for training
-  # to avoid overfitting.
-  if False:
-    hidden = tf.nn.dropout(hidden, 0.5)
-
-  logits = tf.matmul(hidden, weights['out1']) + biases['out1']
+  logits = tf.nn.bias_add(tf.matmul(reshape, weights['out1']), biases['out1'])
   logitss.append(logits)
 
   for i in range(2, NUM_DIGITS+2):
-    fc = 'fc{}'.format(i)
     out = 'out{}'.format(i)
-    hidden = tf.nn.relu(tf.matmul(reshape, weights[fc]) + biases[fc], name=fc)
-    if train:
-      hidden = tf.nn.dropout(hidden, 0.5)
-    logits = tf.matmul(hidden, weights[out]) + biases[out]
-    # logits = tf.Print(logits, [weights[fc], biases[fc], weights[out], biases[out]],
-    #                   "weights and biases (fc and out) for digit {}".format(i), summarize=10)
+    logits = tf.nn.bias_add(tf.matmul(reshape, weights[out]), biases[out])
     logitss.append(logits)
 
   return logitss
@@ -270,22 +249,19 @@ for i in range(2, NUM_DIGITS+2):
 
 # loss = tf.Print(loss, to_print, "Logits 1 to N", summarize=10)
 
-loss += LAMBDA * tf.nn.l2_loss(weights['conv1'])
-loss += LAMBDA * tf.nn.l2_loss(weights['conv2'])
-loss += LAMBDA * tf.nn.l2_loss(weights['conv3'])
-loss += LAMBDA * tf.nn.l2_loss(biases['conv1'])
-loss += LAMBDA * tf.nn.l2_loss(biases['conv2'])
-loss += LAMBDA * tf.nn.l2_loss(biases['conv3'])
-loss += LAMBDA * tf.nn.l2_loss(weights['fc1'])
-loss += LAMBDA * tf.nn.l2_loss(weights['out1'])
-loss += LAMBDA * tf.nn.l2_loss(biases['fc1'])
-loss += LAMBDA * tf.nn.l2_loss(biases['out1'])
+if LAMBDA > 0.0:
+  loss += LAMBDA * tf.nn.l2_loss(weights['conv1'])
+  loss += LAMBDA * tf.nn.l2_loss(weights['conv2'])
+  loss += LAMBDA * tf.nn.l2_loss(weights['conv3'])
+  loss += LAMBDA * tf.nn.l2_loss(biases['conv1'])
+  loss += LAMBDA * tf.nn.l2_loss(biases['conv2'])
+  loss += LAMBDA * tf.nn.l2_loss(biases['conv3'])
+  loss += LAMBDA * tf.nn.l2_loss(weights['out1'])
+  loss += LAMBDA * tf.nn.l2_loss(biases['out1'])
 
-for i in range(2, NUM_DIGITS+2):
-  loss += LAMBDA * tf.nn.l2_loss(weights['fc{}'.format(i)])
-  loss += LAMBDA * tf.nn.l2_loss(weights['out{}'.format(i)])
-  loss += LAMBDA * tf.nn.l2_loss(biases['fc{}'.format(i)])
-  loss += LAMBDA * tf.nn.l2_loss(biases['out{}'.format(i)])
+  for i in range(2, NUM_DIGITS+2):
+    loss += LAMBDA * tf.nn.l2_loss(weights['out{}'.format(i)])
+    loss += LAMBDA * tf.nn.l2_loss(biases['out{}'.format(i)])
 
 # add a summary for loss
 tf.scalar_summary('training loss', loss)
