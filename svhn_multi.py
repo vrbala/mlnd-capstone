@@ -30,9 +30,9 @@ with open(pickle_file, 'rb') as f:
 IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
 BATCH_SIZE = 64
-N_HIDDEN_1 = 64
-LEARNING_RATE = 0.0001
-LAMBDA = 0.0005 # regularization rate
+N_HIDDEN_1 = 128
+LEARNING_RATE = 0.00005
+LAMBDA = 0.0 # regularization rate
 NUM_STEPS = 100000
 NUM_CHANNELS = 1
 NUM_DIGITS = 3 # number of letters in the sequence to transcribe
@@ -223,8 +223,8 @@ def setup_conv_net(X, weights, biases, train=False):
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv3']), name='relu3')
   norm = tf.nn.local_response_normalization(relu)
   pool = tf.nn.max_pool(norm, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool3')
-  if train:
-    pool = tf.nn.dropout(pool, 0.5)
+  if False:
+    pool = tf.nn.dropout(pool, 0.8)
   print("Pool3 shape: " + str(pool.get_shape().as_list()))
 
   # reshape the resulting cuboid to feed to the
@@ -238,7 +238,7 @@ def setup_conv_net(X, weights, biases, train=False):
 
   # introduce a dropout with probability 0.5 only for training
   # to avoid overfitting.
-  if train:
+  if False:
     hidden = tf.nn.dropout(hidden, 0.5)
 
   logits = tf.matmul(hidden, weights['out1']) + biases['out1']
