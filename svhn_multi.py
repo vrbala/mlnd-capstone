@@ -31,8 +31,8 @@ IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
 BATCH_SIZE = 64
 LEARNING_RATE = 0.00005
-LAMBDA = 0.0 # regularization rate
-NUM_STEPS = 100000
+LAMBDA = 0.0001 # regularization rate
+NUM_STEPS = 30000
 NUM_CHANNELS = 3
 NUM_DIGITS = 5 # number of letters in the sequence to transcribe
 STDDEV = 0.08
@@ -216,7 +216,7 @@ def setup_conv_net(X, weights, biases, train=False):
                       padding='SAME', name='conv3')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv3']), name='relu3')
   if train:
-    relu = tf.nn.dropout(relu, 0.8)
+    relu = tf.nn.dropout(relu, 0.5)
   print("Pool3 shape: " + str(relu.get_shape().as_list()))
 
   # reshape the resulting cuboid to feed to the
