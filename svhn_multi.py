@@ -31,12 +31,12 @@ IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
 BATCH_SIZE = 64
 LEARNING_RATE = 0.00005
-LAMBDA = 0.0001 # regularization rate
-NUM_STEPS = 30000
+LAMBDA = 0.0005 # regularization rate
+NUM_STEPS = 50000
 NUM_CHANNELS = 3
 NUM_DIGITS = 5 # number of letters in the sequence to transcribe
 STDDEV = 0.08
-RESTORE = False
+RESTORE = True
 MODEL_CKPT = 'model.ckpt' # checkpoint file
 CDEPTH1 = 16
 CDEPTH2 = 32
@@ -199,6 +199,8 @@ def setup_conv_net(X, weights, biases, train=False):
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv1')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv1']), name='relu1')
+  if train:
+    relu = tf.nn.dropout(relu, 0.8)
   pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
   print("Pool1 shape: " + str(pool.get_shape().as_list()))
 
@@ -207,6 +209,8 @@ def setup_conv_net(X, weights, biases, train=False):
                       strides=[1, 1, 1, 1],
                       padding='SAME', name='conv2')
   relu = tf.nn.relu(tf.nn.bias_add(conv, biases['conv2']), name='relu2')
+  if train:
+    relu = tf.nn.dropout(relu, 0.6)
   pool = tf.nn.max_pool(relu, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME', name='pool2')
   print("Pool2 shape: " + str(pool.get_shape().as_list()))
 
