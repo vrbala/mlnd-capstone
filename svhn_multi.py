@@ -9,10 +9,12 @@ import cPickle as pickle
 import numpy as np
 import operator
 import tensorflow as tf
+from scipy.misc import imsave
 
-# load and format the data
+# ********************************************************************************
+# Load and format the data
+# ********************************************************************************
 pickle_file = 'SVHN_multi_48.pickle'
-
 with open(pickle_file, 'rb') as f:
     save = pickle.load(f)
     train_dataset = save['train_dataset']
@@ -26,17 +28,19 @@ with open(pickle_file, 'rb') as f:
     print('Validation set', valid_dataset.shape, valid_labels.shape)
     print('Test set', test_dataset.shape, test_labels.shape)
 
-# parameters
+# ********************************************************************************
+# Model parameters
+# ********************************************************************************
+
 IMAGE_SIZE = 48
 NUM_LABELS = 11 # digits 0-9 and additional label to indicate absence of a digit(10)
 BATCH_SIZE = 64
 LEARNING_RATE = 0.00005
 LAMBDA = 0.0005 # regularization rate
-NUM_STEPS = 50000
+NUM_STEPS = 200000
 NUM_CHANNELS = 3
 NUM_DIGITS = 5 # number of letters in the sequence to transcribe
-STDDEV = 0.08
-RESTORE = True
+RESTORE = True # set to False to run the training from scratch
 MODEL_CKPT = 'model.ckpt' # checkpoint file
 CDEPTH1 = 16
 CDEPTH2 = 32
@@ -45,11 +49,6 @@ LOG_DIR = 'logs.{}'.format(os.getpid()) # where to write summary logs
 N_HIDDEN_1 = (IMAGE_SIZE // 4) * (IMAGE_SIZE // 4) * CDEPTH3 # 4 => 2^2 (2 = number of pooling layers)
 
 def reformat(dataset, labels):
-    #    dataset = dataset.reshape(-1, 3, IMAGE_SIZE, IMAGE_SIZE)
-    # dataset = dataset.mean(axis=1) # convert to grayscale
-    # dataset = dataset.reshape((-1, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS)).astype(np.float32)
-    # Map 0 to [1.0, 0.0, 0.0 ...], 1 to [0.0, 1.0, 0.0 ...]
-    # labels = (np.arange(1,11) == labels[:,None]).astype(np.float32)
     labels = labels[:, 0:NUM_DIGITS+1]
     return dataset, labels
 
@@ -64,8 +63,8 @@ test_dataset, test_labels = reformat(test_dataset, test_labels)
 # on a larger set. We need faster turnaround for now.
 valid_dataset = valid_dataset[:200, :]
 valid_labels = valid_labels[:200]
-test_dataset = test_dataset[:200, :]
-test_labels = test_labels[:200]
+test_dataset = test_dataset[:1000, :]
+test_labels = test_labels[:1000]
 
 # *** SEEME ***:
 # used for validating an architecture
@@ -92,6 +91,11 @@ print('Training set', train_dataset.shape, train_labels.shape)
 print('Validation set', valid_dataset.shape, valid_labels.shape)
 print('Test set', test_dataset.shape, test_labels.shape)
 
+# ********************************************************************************
+# Various helper functions
+# ********************************************************************************
+
+# add summary nodes for the variable
 def variable_summaries(var, name):
 
   with tf.name_scope('summaries'):
@@ -104,7 +108,8 @@ def variable_summaries(var, name):
     tf.scalar_summary('min/' + name, tf.reduce_min(var))
     tf.histogram_summary(name, var)
 
-def weight_variable(name, shape, stddev=1.0):
+# weight variable for the network
+def weight_variable(name, shape):
   # name: name of this variable
   # shape: list of shape compatible with tf.Variable call
   fan_in = shape[-2]
@@ -119,6 +124,7 @@ def weight_variable(name, shape, stddev=1.0):
   variable_summaries(var, name)
   return var
 
+# bias variable for the network
 def bias_variable(name, shape):
   # name: name of the variable
   # shape: list representing shape of Tensor. compatible with tf shape
@@ -127,12 +133,14 @@ def bias_variable(name, shape):
   variable_summaries(var, name)
   return var
 
+# convert a list of logits to probabilities by applying softmax on them
 def logitss_to_probs(logitss):
     # input: a list of logits
     # output: a 2-D array of softmax operations (they have to be eval'ed in tf session)
     # just applies softmax on each of the logits
     return map(tf.nn.softmax, logitss)
 
+# estimate the accuracy of the predictions
 def tf_accuracy(predictions, tf_labels):
   # predictions is a list of logits for each classifier.
 
@@ -151,6 +159,9 @@ def tf_accuracy(predictions, tf_labels):
 
   return accuracy
 
+# ********************************************************************************
+# Setup the variables
+# ********************************************************************************
 
 # Input data. For the training data, we use a placeholder that will be fed
 # at run time with a training minibatch.
@@ -168,16 +179,16 @@ with tf.name_scope('inputs'):
 # Store layers weight & bias
 # after 2 max pooling operations, the feature maps will have 1/(2*2) of the original spatial dimensions
 weights = {
-  'conv1': weight_variable('conv1/weights', [5, 5, NUM_CHANNELS, CDEPTH1], stddev=STDDEV), # 5x5 kernel, depth CDEPTH1
-  'conv2': weight_variable('conv2/weights', [5, 5, CDEPTH1, CDEPTH2], stddev=STDDEV), # 5x5 kernel, depth CDEPTH2
-  'conv3': weight_variable('conv3/weights', [5, 5, CDEPTH2, CDEPTH3], stddev=STDDEV), # 5x5 kernel, depth CDEPTH3
+  'conv1': weight_variable('conv1/weights', [5, 5, NUM_CHANNELS, CDEPTH1]), # 5x5 kernel, depth CDEPTH1
+  'conv2': weight_variable('conv2/weights', [5, 5, CDEPTH1, CDEPTH2]), # 5x5 kernel, depth CDEPTH2
+  'conv3': weight_variable('conv3/weights', [5, 5, CDEPTH2, CDEPTH3]), # 5x5 kernel, depth CDEPTH3
   # for the length of the sequence of digits
-  'out1': weight_variable('out1/weights', [N_HIDDEN_1, 5], stddev=STDDEV), # length of the sequence: here 1-5 - TODO: make it configurable
+  'out1': weight_variable('out1/weights', [N_HIDDEN_1, 5]), # length of the sequence: here 1-5 - TODO: make it configurable
   }
 
 # for individual digits
 for i in range(2, NUM_DIGITS+2):
-  weights['out{}'.format(i)] = weight_variable('out{}/weights'.format(i), [N_HIDDEN_1, NUM_LABELS], stddev=STDDEV)
+  weights['out{}'.format(i)] = weight_variable('out{}/weights'.format(i), [N_HIDDEN_1, NUM_LABELS])
 
 biases = {
   'conv1': bias_variable('conv1/bias', [CDEPTH1]),
@@ -190,6 +201,10 @@ biases = {
 # for individual digits
 for i in range(2, NUM_DIGITS+2):
   biases['out{}'.format(i)] = bias_variable('out{}/bias'.format(i), [NUM_LABELS])
+
+# ********************************************************************************
+# Helper to setup the convolution net
+# ********************************************************************************
 
 def setup_conv_net(X, weights, biases, train=False):
 
@@ -242,17 +257,13 @@ def setup_conv_net(X, weights, biases, train=False):
 
 logitss = setup_conv_net(tf_train_dataset, weights, biases, train=True)
 
-# losses for weights and biases
+# ********************************************************************************
+# Setup the training loss operations
+# ********************************************************************************
+
 loss =  tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[0], tf_train_labels[:, 0]))
-# debugging op --
-to_print = []
-to_print.append(logitss[0])
-for i in range(2, NUM_DIGITS+2):
-  loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logitss[i-1], tf_train_labels[:, i-1]))
-  to_print.append(logitss[i-1])
 
-# loss = tf.Print(loss, to_print, "Logits 1 to N", summarize=10)
-
+# regularization loss of required
 if LAMBDA > 0.0:
   loss += LAMBDA * tf.nn.l2_loss(weights['conv1'])
   loss += LAMBDA * tf.nn.l2_loss(weights['conv2'])
@@ -270,12 +281,16 @@ if LAMBDA > 0.0:
 # add a summary for loss
 tf.scalar_summary('training loss', loss)
 
-# Optimizer
+# ********************************************************************************
+# Setup the optimizer
+# ********************************************************************************
+
 optimizer = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
 
-tf.scalar_summary('learning rate', LEARNING_RATE)
-
+# ********************************************************************************
 # Predictions for the training, validation data
+# ********************************************************************************
+
 train_prediction = logitss_to_probs(logitss)
 train_accuracy = tf_accuracy(train_prediction, tf_train_labels)
 tf.scalar_summary('training accuracy', train_accuracy)
@@ -292,14 +307,20 @@ test_prediction = logitss_to_probs(test_logitss)
 tf_test_labels = tf.constant(test_labels, dtype=tf.int64)
 test_accuracy = tf_accuracy(test_prediction, tf_test_labels)
 
-# setup validation loss
+# ********************************************************************************
+# Setup validation loss
+# ********************************************************************************
+
 vloss =  tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(valid_logitss[0], tf_valid_labels[:, 0]))
 for i in range(2, NUM_DIGITS+2):
   vloss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(valid_logitss[i-1], tf_valid_labels[:, i-1]))
 
 tf.scalar_summary('validation loss', vloss)
 
-# Merge all the summaries and write them out to ./logs
+# ********************************************************************************
+# Setup the session, merge all the summaries and write them out to ./logs
+# ********************************************************************************
+
 session = tf.Session()
 merged = tf.merge_all_summaries()
 train_writer = tf.train.SummaryWriter(LOG_DIR + '/train',
@@ -307,6 +328,10 @@ train_writer = tf.train.SummaryWriter(LOG_DIR + '/train',
 
 init = tf.initialize_all_variables()
 saver = tf.train.Saver()
+
+# ********************************************************************************
+# Run the graph in the session now
+# ********************************************************************************
 
 with session.as_default():
   # Start running the graph operatons
@@ -317,9 +342,9 @@ with session.as_default():
     saver.restore(session, MODEL_CKPT)
     print("Restored")
 
-  if True:
+  if not RESTORE:
 
-    # run the training steps if we didn't retore a stored model
+    # run the training steps if we didn't restore a stored model
     for step in range(NUM_STEPS):
 
       # Pick an offset within the training data, which has been randomized.
